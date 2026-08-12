@@ -1,0 +1,16 @@
+---
+description: Use gift-bot as the template library for agent docs and bot scaffolding
+alwaysApply: true
+---
+
+# gift-bot templates
+
+This repo (`order-bot`) may be empty of product code. Before inventing agent workflows, Docker/bot layout, Mini App, issue tracker, or skill docs, **open the sibling gift-bot checkout** and reuse what fits:
+
+- Relative: `../gift-bot`
+- Absolute: `/Users/reqiewu/Projects/Pets/gift-bot`
+- Start at: `../gift-bot/AGENTS.md`
+
+Grill lives here: `.agents/skills/grill-me` → `.agents/skills/grilling`.
+
+Do not copy secrets (`.env`) from gift-bot.
