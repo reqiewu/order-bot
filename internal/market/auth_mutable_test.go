@@ -15,7 +15,7 @@ func TestMutableTokenSetAndGet(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if tok != "tma user=1" {
+	if tok != "user=1" {
 		t.Fatalf("tok=%q", tok)
 	}
 	m.Set("user=2&hash=x")

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"strings"
 	"sync"
 )
 
@@ -14,12 +13,17 @@ type TokenProvider interface {
 	Token(ctx context.Context) (string, error)
 }
 
+var (
+	// ErrEmptyToken — credential не задан.
+	ErrEmptyToken = errors.New("market: empty token")
+)
+
 // StaticToken возвращает фиксированный токен из конфигурации.
 type StaticToken string
 
 func (s StaticToken) Token(context.Context) (string, error) {
 	if s == "" {
-		return "", errors.New("market: empty static MRKT token")
+		return "", ErrEmptyToken
 	}
 	return string(s), nil
 }
@@ -35,7 +39,7 @@ func PortalsTMAFromEnv(key string) StaticToken {
 	return StaticTokenFromEnv(key)
 }
 
-// MutableToken — TokenProvider, который можно обновить без рестарта (Portals TMA).
+// MutableToken — TokenProvider, который можно обновить без рестарта.
 type MutableToken struct {
 	mu  sync.RWMutex
 	tok string
@@ -43,7 +47,12 @@ type MutableToken struct {
 
 // NewMutableToken создаёт MutableToken с начальным значением (может быть пустым).
 func NewMutableToken(initial string) *MutableToken {
-	return &MutableToken{tok: normalizePortalsTMA(initial)}
+	return &MutableToken{tok: NormalizePortalsTMA(initial)}
+}
+
+// NewMutableMRKT — как NewMutableToken, но нормализует JWT.
+func NewMutableMRKT(initial string) *MutableToken {
+	return &MutableToken{tok: NormalizeMRKTToken(initial)}
 }
 
 func (m *MutableToken) Token(context.Context) (string, error) {
@@ -53,22 +62,32 @@ func (m *MutableToken) Token(context.Context) (string, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.tok == "" {
-		return "", errors.New("market: empty Portals TMA")
+		return "", ErrEmptyToken
 	}
 	return m.tok, nil
 }
 
-// Set обновляет токен в памяти (нормализует пробелы/кавычки).
+// Set обновляет токен (нормализует как Portals TMA — для MRKT используй SetMRKT).
 func (m *MutableToken) Set(tok string) {
 	if m == nil {
 		return
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.tok = normalizePortalsTMA(tok)
+	m.tok = NormalizePortalsTMA(tok)
 }
 
-// Get возвращает текущий plaintext (для persist); пустая строка если не задан.
+// SetMRKT обновляет JWT с MRKT-нормализацией.
+func (m *MutableToken) SetMRKT(tok string) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.tok = NormalizeMRKTToken(tok)
+}
+
+// Get возвращает текущий plaintext; пустая строка если не задан.
 func (m *MutableToken) Get() string {
 	if m == nil {
 		return ""
@@ -76,12 +95,6 @@ func (m *MutableToken) Get() string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.tok
-}
-
-func normalizePortalsTMA(tok string) string {
-	tok = strings.TrimSpace(tok)
-	tok = strings.Trim(tok, `"'`)
-	return strings.TrimSpace(tok)
 }
 
 // UnauthorizedError — API отклонил учётные данные (например, HTTP 401).
@@ -103,3 +116,4 @@ func IsUnauthorized(err error) bool {
 	var u *UnauthorizedError
 	return errors.As(err, &u)
 }
+

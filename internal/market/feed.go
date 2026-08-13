@@ -179,6 +179,9 @@ func parseNanoTON(raw json.RawMessage) float64 {
 }
 
 func (m *MRKT) postFeed(ctx context.Context, token string, body feedRequest) (*feedResponse, error) {
+	if err := m.gate.wait(ctx); err != nil {
+		return nil, err
+	}
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return nil, fmt.Errorf("market: marshal feed: %w", err)

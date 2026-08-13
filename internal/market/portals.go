@@ -403,14 +403,20 @@ func (p *Portals) get(ctx context.Context, path string, q url.Values, requireAut
 		req.Header.Set("Origin", "https://portal-market.com")
 		req.Header.Set("Referer", "https://portal-market.com/")
 		req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; order-bot/1.0)")
-		if p.auth != nil {
+		if requireAuth {
+			if p.auth == nil {
+				return nil, fmt.Errorf("market/portals: auth provider is required")
+			}
 			tok, err := p.auth.Token(ctx)
 			if err != nil {
 				return nil, err
 			}
 			req.Header.Set("Authorization", portalsAuthHeader(tok))
-		} else if requireAuth {
-			return nil, fmt.Errorf("market/portals: auth provider is required")
+		} else if p.auth != nil {
+			// Public endpoints work without TMA; attach token only if present.
+			if tok, err := p.auth.Token(ctx); err == nil && tok != "" {
+				req.Header.Set("Authorization", portalsAuthHeader(tok))
+			}
 		}
 
 		res, err := p.http.Do(req)

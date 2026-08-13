@@ -5,10 +5,15 @@ import (
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/reqiewu/order-bot/internal/jitter"
 )
 
-// portalsMinInterval — пауза между HTTP-запросами к Portals (Radar / readers).
+// portalsMinInterval — база между HTTP-запросами к Portals.
 const portalsMinInterval = 200 * time.Millisecond
+
+// portalsJitterMax — сверху к базе (0…N).
+const portalsJitterMax = 200 * time.Millisecond
 
 // portalsMaxRetries — доп. попытки при 429 (всего 1+N).
 const portalsMaxRetries = 4
@@ -18,7 +23,7 @@ type portalsGate struct {
 	next time.Time
 }
 
-// wait сериализует запросы и выдерживает минимальный интервал.
+// wait сериализует запросы и выдерживает интервал + jitter.
 func (g *portalsGate) wait(ctx context.Context) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -34,7 +39,7 @@ func (g *portalsGate) wait(ctx context.Context) error {
 			now = time.Now()
 		}
 	}
-	g.next = now.Add(portalsMinInterval)
+	g.next = now.Add(portalsMinInterval + jitter.UpTo(portalsJitterMax))
 	return nil
 }
 
@@ -45,7 +50,7 @@ func retryAfterDelay(header string, attempt int) time.Duration {
 			if d > 30*time.Second {
 				d = 30 * time.Second
 			}
-			return d
+			return d + jitter.UpTo(500*time.Millisecond)
 		}
 	}
 	d := 500 * time.Millisecond
@@ -55,7 +60,7 @@ func retryAfterDelay(header string, attempt int) time.Duration {
 	if d > 8*time.Second {
 		d = 8 * time.Second
 	}
-	return d
+	return d + jitter.UpTo(d/4)
 }
 
 func stringsTrimSpaceDigits(s string) string {

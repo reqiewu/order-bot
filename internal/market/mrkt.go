@@ -37,6 +37,7 @@ type MRKT struct {
 	auth     TokenProvider
 	http     *http.Client
 	maxPages int
+	gate     mrktGate
 }
 
 // NewMRKT создаёт клиент Market для MRKT.
@@ -184,6 +185,9 @@ func (m *MRKT) List(ctx context.Context, watch marketport.WatchItem) ([]marketpo
 }
 
 func (m *MRKT) postSaling(ctx context.Context, token string, body salingRequest) (*salingResponse, error) {
+	if err := m.gate.wait(ctx); err != nil {
+		return nil, err
+	}
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return nil, fmt.Errorf("market: marshal request: %w", err)
