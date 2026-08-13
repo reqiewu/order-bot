@@ -73,11 +73,41 @@ Tonnel ходит с **Chrome TLS** (не обычный Go `net/http`). Есл�
 | Команда | Что делает |
 | :---: | :---: |
 | `make start` | собрать и запустить |
+| `make pull` | скачать образ из GHCR (`IMAGE=…`) |
 | `make logs` | логи |
 | `make stop` | остановить |
 | `make clean` | stop + образ + volume |
 
 Mini App слушает `:8080` (`MINIAPP_PORT`).
+
+---
+
+## CI / CD
+
+На каждый push / PR в `main`:
+
+| Job | Что делает |
+| :---: | :---: |
+| **test** | `go vet` + `go test` + обновляет coverage-бейдж |
+| **docker** | собирает образ; на `main` пушит в **GHCR** |
+
+Образы:
+
+```text
+ghcr.io/reqiewu/order-bot:latest
+ghcr.io/reqiewu/order-bot:<short-sha>
+```
+
+На VPS (репо private → нужен `read:packages` PAT):
+
+```bash
+echo "$GHCR_TOKEN" | docker login ghcr.io -u reqiewu --password-stdin
+IMAGE=ghcr.io/reqiewu/order-bot:latest make pull start
+```
+
+SSH-деплой из Actions пока не подключён — скажи хост, добавим.
+
+> Если в ветке включены **required signed commits**, автокоммит coverage-бейджа упадёт: либо исключи `.github/badges/` из правила, либо скажи — перенесём бейдж на artifact.
 
 ---
 

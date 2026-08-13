@@ -1,5 +1,7 @@
 services:
   order-bot:
+    # Локально: build. С CI: IMAGE=ghcr.io/reqiewu/order-bot:latest make start
+    image: ${IMAGE:-order-bot:local}
     build: .
     restart: unless-stopped
     env_file:
