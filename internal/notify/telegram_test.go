@@ -79,3 +79,37 @@ func TestBuyKeyboardGetgemsBuy(t *testing.T) {
 		t.Fatalf("sell %+v", sell)
 	}
 }
+
+func TestBuyKeyboardTonnel(t *testing.T) {
+	t.Parallel()
+	s := engine.Signal{
+		BuyMarket:  marketport.MarketTonnel,
+		SellMarket: marketport.MarketGetgems,
+		Lot:        catalog.Lot{URL: "https://marketplace.tonnel.network/nft/4242"},
+		SellURL:    "https://getgems.io/nft/EQ-lot",
+	}
+	m := buyKeyboard(s)
+	raw, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var parsed struct {
+		Inline [][]struct {
+			Text string `json:"text"`
+			URL  string `json:"url"`
+		} `json:"inline_keyboard"`
+	}
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		t.Fatal(err)
+	}
+	if len(parsed.Inline) != 1 || len(parsed.Inline[0]) != 2 {
+		t.Fatalf("buttons=%s", raw)
+	}
+	buy, sell := parsed.Inline[0][0], parsed.Inline[0][1]
+	if buy.Text != "Купить Tonnel" || buy.URL != s.Lot.URL {
+		t.Fatalf("buy %+v", buy)
+	}
+	if sell.Text != "Купить Getgems" || sell.URL != s.SellURL {
+		t.Fatalf("sell %+v", sell)
+	}
+}

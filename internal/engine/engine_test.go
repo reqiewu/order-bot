@@ -114,3 +114,49 @@ func TestGetgemsIsBuyVenue(t *testing.T) {
 		t.Fatalf("buy=%s sell=%s", cap.last.BuyMarket, cap.last.SellMarket)
 	}
 }
+
+func TestQuotePicksHighestAskIncludingTonnel(t *testing.T) {
+	cap := &captureAlert{}
+	eng := engine.New(applog.Nop(), spread.DefaultFees(), salesStub, cap, engine.NewMemoryDeduper())
+	key := "w"
+	eng.Handle(engine.MarketEvent{
+		Market: marketport.MarketTonnel, WatchID: key,
+		Listings: []catalog.Lot{lot("t1", marketport.MarketTonnel, 22)},
+	})
+	eng.Handle(engine.MarketEvent{
+		Market: marketport.MarketGetgems, WatchID: key,
+		Listings: []catalog.Lot{lot("g1", marketport.MarketGetgems, 20)},
+	})
+	eng.Handle(engine.MarketEvent{
+		Market: marketport.MarketMRKT, WatchID: key,
+		Listings: []catalog.Lot{lot("m1", marketport.MarketMRKT, 8)},
+	})
+	if cap.n != 1 {
+		t.Fatalf("alerts=%d", cap.n)
+	}
+	if cap.last.BuyMarket != marketport.MarketMRKT || cap.last.SellMarket != marketport.MarketTonnel {
+		t.Fatalf("buy=%s sell=%s", cap.last.BuyMarket, cap.last.SellMarket)
+	}
+	if cap.last.SellURL != "https://example/tonnel/t1" {
+		t.Fatalf("sell url=%s", cap.last.SellURL)
+	}
+}
+
+func TestTonnelIsBuyVenue(t *testing.T) {
+	cap := &captureAlert{}
+	eng := engine.New(applog.Nop(), spread.DefaultFees(), salesStub, cap, engine.NewMemoryDeduper())
+	eng.Handle(engine.MarketEvent{
+		Market: marketport.MarketMRKT, WatchID: "w",
+		Listings: []catalog.Lot{lot("m1", marketport.MarketMRKT, 20)},
+	})
+	eng.Handle(engine.MarketEvent{
+		Market: marketport.MarketTonnel, WatchID: "w",
+		Listings: []catalog.Lot{lot("t1", marketport.MarketTonnel, 8)},
+	})
+	if cap.n != 1 {
+		t.Fatalf("alerts=%d", cap.n)
+	}
+	if cap.last.BuyMarket != marketport.MarketTonnel || cap.last.SellMarket != marketport.MarketMRKT {
+		t.Fatalf("buy=%s sell=%s", cap.last.BuyMarket, cap.last.SellMarket)
+	}
+}

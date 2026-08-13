@@ -10,6 +10,7 @@ const (
 	MarketMRKT    = "mrkt"
 	MarketPortals = "portals"
 	MarketGetgems = "getgems"
+	MarketTonnel  = "tonnel"
 
 	// DefaultSaleLimit — сколько sales тянуть с API за раз (нужно ≥5 после чистки).
 	DefaultSaleLimit = 50
@@ -32,7 +33,7 @@ type Listing struct {
 	Backdrop   string
 	Symbol     string
 	URL        string
-	Market     string // mrkt | portals | getgems — заполняет ingress
+	Market     string // mrkt | portals | getgems | tonnel — заполняет ingress
 }
 
 // Sale — недавняя продажа.

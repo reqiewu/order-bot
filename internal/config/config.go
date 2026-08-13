@@ -9,26 +9,32 @@ import (
 )
 
 type Config struct {
-	TelegramToken string
-	OperatorID    int64
-	MRKTToken     string
-	PortalsTMA    string
-	GetgemsAPIKey string
-	BoltPath      string
-	PollInterval  time.Duration
-	WatchJSON     string // optional bootstrap slots JSON array
-	LogLevel      string // debug|info|warn|error
+	TelegramToken  string
+	OperatorID     int64
+	MRKTToken      string
+	PortalsTMA     string
+	GetgemsAPIKey  string
+	TonnelInitData string
+	TonnelBaseURL  string
+	TonnelDisabled bool
+	BoltPath       string
+	PollInterval   time.Duration
+	WatchJSON      string // optional bootstrap slots JSON array
+	LogLevel       string // debug|info|warn|error
 }
 
 func FromEnv() (Config, error) {
 	cfg := Config{
-		TelegramToken: strings.TrimSpace(os.Getenv("TELEGRAM_BOT_TOKEN")),
-		MRKTToken:     strings.TrimSpace(os.Getenv("MRKT_TOKEN")),
-		PortalsTMA:    strings.TrimSpace(os.Getenv("PORTALS_TMA")),
-		GetgemsAPIKey: strings.TrimSpace(os.Getenv("GETGEMS_API_KEY")),
-		BoltPath:      envOr("BOLT_PATH", "data/order-bot.db"),
-		WatchJSON:     strings.TrimSpace(os.Getenv("WATCH_SLOTS_JSON")),
-		LogLevel:      logLevelFromEnv(),
+		TelegramToken:  strings.TrimSpace(os.Getenv("TELEGRAM_BOT_TOKEN")),
+		MRKTToken:      strings.TrimSpace(os.Getenv("MRKT_TOKEN")),
+		PortalsTMA:     strings.TrimSpace(os.Getenv("PORTALS_TMA")),
+		GetgemsAPIKey:  strings.TrimSpace(os.Getenv("GETGEMS_API_KEY")),
+		TonnelInitData: strings.TrimSpace(os.Getenv("TONNEL_INITDATA")),
+		TonnelBaseURL:  strings.TrimSpace(os.Getenv("TONNEL_BASE_URL")),
+		TonnelDisabled: envTruthy("TONNEL_DISABLED"),
+		BoltPath:       envOr("BOLT_PATH", "data/order-bot.db"),
+		WatchJSON:      strings.TrimSpace(os.Getenv("WATCH_SLOTS_JSON")),
+		LogLevel:       logLevelFromEnv(),
 	}
 	if v := strings.TrimSpace(os.Getenv("OPERATOR_TELEGRAM_ID")); v != "" {
 		id, err := strconv.ParseInt(v, 10, 64)
@@ -47,6 +53,11 @@ func FromEnv() (Config, error) {
 	}
 	cfg.PollInterval = time.Duration(sec) * time.Second
 	return cfg, nil
+}
+
+func envTruthy(k string) bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv(k)))
+	return v == "1" || v == "true" || v == "yes"
 }
 
 func envOr(k, def string) string {

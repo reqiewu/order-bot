@@ -111,9 +111,17 @@ func main() {
 		getgems = market.NewGetgems(market.GetgemsConfig{APIKey: cfg.GetgemsAPIKey})
 		readers[marketport.MarketGetgems] = getgems
 	}
+	var tonnel *market.Tonnel
+	if !cfg.TonnelDisabled {
+		tonnel = market.NewTonnel(market.TonnelConfig{
+			BaseURL:  cfg.TonnelBaseURL,
+			InitData: market.NormalizePortalsTMA(cfg.TonnelInitData),
+		})
+		readers[marketport.MarketTonnel] = tonnel
+	}
 
 	probeCtx, cancelProbe := context.WithTimeout(context.Background(), 15*time.Second)
-	checkTokens(probeCtx, log, mrktTok, portalsTok, mrkt, portals, getgems)
+	checkTokens(probeCtx, log, mrktTok, portalsTok, mrkt, portals, getgems, tonnel)
 	cancelProbe()
 
 	slotsFn := func() []catalog.WatchSlot {
@@ -164,6 +172,12 @@ func main() {
 	if getgems != nil {
 		go (&ingress.Worker{
 			Log: log, Reader: ingress.Reader{Name: marketport.MarketGetgems, Client: getgems},
+			Slots: slotsFn, IntervalFn: intervalFn, Out: events,
+		}).Run(ctx)
+	}
+	if tonnel != nil {
+		go (&ingress.Worker{
+			Log: log, Reader: ingress.Reader{Name: marketport.MarketTonnel, Client: tonnel},
 			Slots: slotsFn, IntervalFn: intervalFn, Out: events,
 		}).Run(ctx)
 	}
@@ -234,6 +248,7 @@ func main() {
 		"tg", cfg.TelegramToken != "" && cfg.OperatorID != 0,
 		"miniapp", miniCfg.Enabled(),
 		"getgems", getgems != nil,
+		"tonnel", tonnel != nil,
 		"log", cfg.LogLevel,
 	)
 	<-ctx.Done()
@@ -247,6 +262,7 @@ func checkTokens(
 	mrkt *market.MRKT,
 	portals *market.Portals,
 	getgems *market.Getgems,
+	tonnel *market.Tonnel,
 ) {
 	if mrktTok.Get() == "" {
 		log.Warn("MRKT token empty — set in Mini App or MRKT_TOKEN")
@@ -270,6 +286,17 @@ func checkTokens(
 		log.Warn("Getgems API key dead", "err", err)
 	} else {
 		log.Info("Getgems API key ok")
+	}
+
+	if tonnel == nil {
+		log.Warn("Tonnel venue off (TONNEL_DISABLED)")
+	} else if err := tonnel.CheckAuth(ctx); err != nil {
+		log.Warn("Tonnel pageGifts failed", "err", err)
+	} else {
+		log.Info("Tonnel pageGifts ok")
+	}
+	if tonnel != nil && !tonnel.HasInitData() {
+		log.Warn("TONNEL_INITDATA empty — Tonnel asks work, comps/saleHistory will skip")
 	}
 }
 

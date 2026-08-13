@@ -142,6 +142,8 @@ func marketBtn(market, url string) (string, string) {
 		return "Купить MRKT", url
 	case marketport.MarketGetgems:
 		return "Купить Getgems", url
+	case marketport.MarketTonnel:
+		return "Купить Tonnel", url
 	default:
 		return "", ""
 	}
