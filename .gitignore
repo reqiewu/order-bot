@@ -14,3 +14,8 @@ context
 agents
 CONTEXT.md
 AGENTS.md
+
+# Mini App
+web/node_modules/
+web/dist/
+web/tsconfig.tsbuildinfo

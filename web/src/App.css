@@ -1,0 +1,282 @@
+.pick-btn {
+  width: calc(100% - 32px);
+  margin: 6px 16px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--tgui--outline, #3a3a3a);
+  background: var(--tgui--secondary_bg_color, #1c1c1e);
+  color: var(--tgui--text_color, #fff);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  text-align: left;
+}
+
+.pick-btn:disabled {
+  opacity: 0.45;
+}
+
+.pick-btn__left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  opacity: 0.9;
+  font-size: 13px;
+}
+
+.pick-btn__left > span:last-child {
+  opacity: 0.65;
+}
+
+.pick-btn__thumb {
+  display: inline-block;
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  object-fit: contain;
+  background: #222;
+  flex-shrink: 0;
+}
+
+.pick-btn__thumb--empty {
+  background: #2a2a2a;
+}
+
+.pick-btn strong {
+  font-weight: 600;
+  font-size: 15px;
+}
+
+.slot-thumb {
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  object-fit: contain;
+  background: #222;
+}
+
+.preview-card {
+  position: relative;
+  margin: 8px 16px 12px;
+  border-radius: 16px;
+  overflow: hidden;
+  background: #2c2c2e;
+  min-height: 220px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.25s ease;
+}
+
+.preview-card__img {
+  width: min(70%, 220px);
+  height: auto;
+  object-fit: contain;
+  margin: 24px 0 40px;
+}
+
+.preview-card__x {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.35);
+  color: #fff;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.preview-card__credit {
+  position: absolute;
+  bottom: 12px;
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 12px;
+  text-decoration: underline;
+}
+
+.sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: var(--tgui--bg_color, #000);
+  display: flex;
+  flex-direction: column;
+}
+
+.sheet__bar {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  padding: 12px 14px 8px;
+}
+
+.sheet__title {
+  font-weight: 600;
+  text-align: center;
+}
+
+.sheet__link {
+  border: 0;
+  background: transparent;
+  color: #2aabee;
+  font-size: 16px;
+  padding: 4px 0;
+}
+
+.sheet__bar .sheet__link:last-child {
+  justify-self: end;
+}
+
+.sheet__search {
+  padding: 0 14px 10px;
+}
+
+.sheet__search input {
+  width: 100%;
+  box-sizing: border-box;
+  border: 0;
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: #1c1c1e;
+  color: #fff;
+  font-size: 16px;
+}
+
+.sheet__sort {
+  display: flex;
+  gap: 8px;
+  padding: 0 14px 10px;
+  overflow-x: auto;
+}
+
+.sheet__sort button {
+  border: 0;
+  border-radius: 999px;
+  padding: 6px 12px;
+  background: #1c1c1e;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.sheet__sort button.is-on {
+  background: #2aabee;
+  color: #fff;
+}
+
+.sheet__list {
+  overflow: auto;
+  flex: 1;
+  -webkit-overflow-scrolling: touch;
+}
+
+.sheet__row {
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid #2a2a2a;
+  background: transparent;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  text-align: left;
+}
+
+.sheet__thumb {
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  object-fit: contain;
+  background: #222;
+  flex-shrink: 0;
+}
+
+.sheet__thumb--empty {
+  background: #2a2a2a;
+}
+
+.sheet__main {
+  flex: 1;
+  min-width: 0;
+}
+
+.sheet__name {
+  font-size: 16px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sheet__meta {
+  margin-top: 2px;
+  font-size: 12px;
+  opacity: 0.55;
+}
+
+.sheet__right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.sheet__metrics {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+
+.sheet__metrics .sheet__meta {
+  margin-top: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.sheet__num {
+  opacity: 0.85;
+  font-variant-numeric: tabular-nums;
+}
+
+.sheet__rarity {
+  color: #2aabee;
+  font-variant-numeric: tabular-nums;
+}
+
+.sheet__check {
+  color: #2aabee;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.token-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.token-mark--ok {
+  color: #fff;
+  background: #31b545;
+}
+
+.token-mark--bad {
+  color: #fff;
+  background: #e53935;
+}
+
+.token-mark--unknown {
+  color: #888;
+  background: rgba(127, 127, 127, 0.25);
+}
