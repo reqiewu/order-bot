@@ -102,8 +102,18 @@ func main() {
 	mrkt := market.NewMRKT(market.Config{Auth: mrktTok})
 	portals := market.NewPortals(market.PortalsConfig{Auth: portalsTok})
 
+	readers := map[string]marketport.MarketReader{
+		marketport.MarketMRKT:    mrkt,
+		marketport.MarketPortals: portals,
+	}
+	var getgems *market.Getgems
+	if cfg.GetgemsAPIKey != "" {
+		getgems = market.NewGetgems(market.GetgemsConfig{APIKey: cfg.GetgemsAPIKey})
+		readers[marketport.MarketGetgems] = getgems
+	}
+
 	probeCtx, cancelProbe := context.WithTimeout(context.Background(), 15*time.Second)
-	checkTokens(probeCtx, log, mrktTok, portalsTok, mrkt, portals)
+	checkTokens(probeCtx, log, mrktTok, portalsTok, mrkt, portals, getgems)
 	cancelProbe()
 
 	slotsFn := func() []catalog.WatchSlot {
@@ -124,11 +134,6 @@ func main() {
 			logAlert,
 			&notify.Telegram{Token: cfg.TelegramToken, ChatID: cfg.OperatorID, Rates: rates},
 		}}
-	}
-
-	readers := map[string]marketport.MarketReader{
-		marketport.MarketMRKT:    mrkt,
-		marketport.MarketPortals: portals,
 	}
 
 	events := make(chan engine.MarketEvent, 16)
@@ -156,6 +161,12 @@ func main() {
 		Log: log, Reader: ingress.Reader{Name: marketport.MarketPortals, Client: portals},
 		Slots: slotsFn, IntervalFn: intervalFn, Out: events,
 	}).Run(ctx)
+	if getgems != nil {
+		go (&ingress.Worker{
+			Log: log, Reader: ingress.Reader{Name: marketport.MarketGetgems, Client: getgems},
+			Slots: slotsFn, IntervalFn: intervalFn, Out: events,
+		}).Run(ctx)
+	}
 
 	miniCfg, err := miniapp.ConfigFromEnv(cfg.TelegramToken, cfg.OperatorID)
 	if err != nil {
@@ -222,6 +233,7 @@ func main() {
 		"bolt", cfg.BoltPath,
 		"tg", cfg.TelegramToken != "" && cfg.OperatorID != 0,
 		"miniapp", miniCfg.Enabled(),
+		"getgems", getgems != nil,
 		"log", cfg.LogLevel,
 	)
 	<-ctx.Done()
@@ -234,6 +246,7 @@ func checkTokens(
 	mrktTok, portalsTok *market.MutableToken,
 	mrkt *market.MRKT,
 	portals *market.Portals,
+	getgems *market.Getgems,
 ) {
 	if mrktTok.Get() == "" {
 		log.Warn("MRKT token empty — set in Mini App or MRKT_TOKEN")
@@ -249,6 +262,14 @@ func checkTokens(
 		log.Warn("Portals TMA dead — update in Mini App", "err", err)
 	} else {
 		log.Info("Portals TMA ok")
+	}
+
+	if getgems == nil {
+		log.Warn("GETGEMS_API_KEY empty — Getgems venue off")
+	} else if err := getgems.CheckAuth(ctx); err != nil {
+		log.Warn("Getgems API key dead", "err", err)
+	} else {
+		log.Info("Getgems API key ok")
 	}
 }
 

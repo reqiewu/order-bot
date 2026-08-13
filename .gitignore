@@ -9,7 +9,8 @@
 .agents/
 .cursor/
 .docs/
-docs/
+docs/*
+!docs/listing-capacity.canvas.tsx
 context
 agents
 CONTEXT.md

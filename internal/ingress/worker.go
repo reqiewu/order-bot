@@ -48,7 +48,7 @@ func (w *Worker) interval() time.Duration {
 			base = 90 * time.Second
 		}
 	}
-	// ±15% чтобы MRKT/Portals воркеры не били API синхронно.
+	// ±15% чтобы воркеры маркетов не били API синхронно.
 	return jitter.Around(base, 0.15)
 }
 

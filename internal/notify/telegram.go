@@ -13,6 +13,7 @@ import (
 	"github.com/reqiewu/order-bot/internal/engine"
 	"github.com/reqiewu/order-bot/internal/fx"
 	"github.com/reqiewu/order-bot/internal/giftid"
+	"github.com/reqiewu/order-bot/internal/marketport"
 	"github.com/reqiewu/order-bot/internal/money"
 	"github.com/reqiewu/order-bot/internal/spread"
 )
@@ -113,12 +114,13 @@ func buyKeyboard(s engine.Signal) map[string]any {
 		URL  string `json:"url"`
 	}
 	var row []btn
-	portalsURL, mrktURL := marketBuyURLs(s)
-	if portalsURL != "" {
-		row = append(row, btn{Text: "Купить Portals", URL: portalsURL})
+	buyURL := strings.TrimSpace(s.Lot.URL)
+	sellURL := strings.TrimSpace(s.SellURL)
+	if label, url := marketBtn(s.BuyMarket, buyURL); url != "" {
+		row = append(row, btn{Text: label, URL: url})
 	}
-	if mrktURL != "" {
-		row = append(row, btn{Text: "Купить MRKT", URL: mrktURL})
+	if label, url := marketBtn(s.SellMarket, sellURL); url != "" {
+		row = append(row, btn{Text: label, URL: url})
 	}
 	if len(row) == 0 {
 		return nil
@@ -128,21 +130,21 @@ func buyKeyboard(s engine.Signal) map[string]any {
 	}
 }
 
-func marketBuyURLs(s engine.Signal) (portals, mrkt string) {
-	buyURL := strings.TrimSpace(s.Lot.URL)
-	sellURL := strings.TrimSpace(s.SellURL)
-	switch s.BuyMarket {
-	case "portals":
-		portals = buyURL
-		mrkt = sellURL
-	case "mrkt":
-		mrkt = buyURL
-		portals = sellURL
-	default:
-		portals = buyURL
-		mrkt = sellURL
+func marketBtn(market, url string) (string, string) {
+	url = strings.TrimSpace(url)
+	if url == "" {
+		return "", ""
 	}
-	return portals, mrkt
+	switch market {
+	case marketport.MarketPortals:
+		return "Купить Portals", url
+	case marketport.MarketMRKT:
+		return "Купить MRKT", url
+	case marketport.MarketGetgems:
+		return "Купить Getgems", url
+	default:
+		return "", ""
+	}
 }
 
 func formatTON(n money.NanoTON) string {

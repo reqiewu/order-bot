@@ -9,14 +9,15 @@ import (
 )
 
 type Config struct {
-	TelegramToken  string
-	OperatorID     int64
-	MRKTToken      string
-	PortalsTMA     string
-	BoltPath       string
-	PollInterval   time.Duration
-	WatchJSON      string // optional bootstrap slots JSON array
-	LogLevel       string // debug|info|warn|error
+	TelegramToken string
+	OperatorID    int64
+	MRKTToken     string
+	PortalsTMA    string
+	GetgemsAPIKey string
+	BoltPath      string
+	PollInterval  time.Duration
+	WatchJSON     string // optional bootstrap slots JSON array
+	LogLevel      string // debug|info|warn|error
 }
 
 func FromEnv() (Config, error) {
@@ -24,6 +25,7 @@ func FromEnv() (Config, error) {
 		TelegramToken: strings.TrimSpace(os.Getenv("TELEGRAM_BOT_TOKEN")),
 		MRKTToken:     strings.TrimSpace(os.Getenv("MRKT_TOKEN")),
 		PortalsTMA:    strings.TrimSpace(os.Getenv("PORTALS_TMA")),
+		GetgemsAPIKey: strings.TrimSpace(os.Getenv("GETGEMS_API_KEY")),
 		BoltPath:      envOr("BOLT_PATH", "data/order-bot.db"),
 		WatchJSON:     strings.TrimSpace(os.Getenv("WATCH_SLOTS_JSON")),
 		LogLevel:      logLevelFromEnv(),
