@@ -16,7 +16,7 @@ type Config struct {
 	BoltPath       string
 	PollInterval   time.Duration
 	WatchJSON      string // optional bootstrap slots JSON array
-	LogDebug       bool
+	LogLevel       string // debug|info|warn|error
 }
 
 func FromEnv() (Config, error) {
@@ -26,7 +26,7 @@ func FromEnv() (Config, error) {
 		PortalsTMA:    strings.TrimSpace(os.Getenv("PORTALS_TMA")),
 		BoltPath:      envOr("BOLT_PATH", "data/order-bot.db"),
 		WatchJSON:     strings.TrimSpace(os.Getenv("WATCH_SLOTS_JSON")),
-		LogDebug:      os.Getenv("LOG_DEBUG") == "1" || strings.EqualFold(os.Getenv("LOG_LEVEL"), "debug"),
+		LogLevel:      logLevelFromEnv(),
 	}
 	if v := strings.TrimSpace(os.Getenv("OPERATOR_TELEGRAM_ID")); v != "" {
 		id, err := strconv.ParseInt(v, 10, 64)
@@ -52,4 +52,21 @@ func envOr(k, def string) string {
 		return v
 	}
 	return def
+}
+
+// LOG_LEVEL=debug|info|warn|error; LOG_DEBUG=1 — alias для debug.
+func logLevelFromEnv() string {
+	if v := strings.ToLower(strings.TrimSpace(os.Getenv("LOG_LEVEL"))); v != "" {
+		switch v {
+		case "debug", "info", "warn", "warning", "error":
+			if v == "warning" {
+				return "warn"
+			}
+			return v
+		}
+	}
+	if os.Getenv("LOG_DEBUG") == "1" || strings.EqualFold(os.Getenv("LOG_DEBUG"), "true") {
+		return "debug"
+	}
+	return "info"
 }
