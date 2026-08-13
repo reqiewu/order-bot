@@ -1,0 +1,33 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: test
+        run: go test ./... -coverprofile=coverage.out -covermode=atomic
+      - name: coverage badge
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          pct=$(go tool cover -func=coverage.out | awk '/^total:/{gsub(/%/,"",$3); print $3}')
+          python3 .github/scripts/coverage-badge.py "$pct" .github/badges/coverage.svg
+      - uses: stefanzweifel/git-auto-commit-action@v5
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        with:
+          commit_message: "chore: update coverage badge [skip ci]"
+          file_pattern: .github/badges/coverage.svg
+          commit_user_name: github-actions[bot]
+          commit_user_email: 41898282+github-actions[bot]@users.noreply.github.com

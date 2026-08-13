@@ -1,27 +1,101 @@
 # order-bot
 
-Личный Telegram-бот для кросс-маркет paper-снайпа Telegram Gifts (Portals ↔ MRKT ↔ Getgems ↔ Tonnel).
+[![CI](https://github.com/reqiewu/order-bot/actions/workflows/ci.yml/badge.svg)](https://github.com/reqiewu/order-bot/actions/workflows/ci.yml)
+![coverage](.github/badges/coverage.svg)
 
-## Make (Docker)
+Личный paper-снайпер **Telegram Gifts**: считает кросс-маркет спред и пишет в личку «купил бы / продал бы». Сам ничего не покупает.
+
+**Portals** · **MRKT** · **Getgems** · **Tonnel**
+
+| | |
+| :---: | :---: |
+| Кто | один оператор |
+| Режим | Paper (Confirm / Auto — позже) |
+| Матч | коллекция + model + backdrop |
+| Триггер | только кросс-маркет; same-market не алертит |
+
+```text
+watch-слоты ──▶ 4 маркета (poll) ──▶ книги asks
+                                      │
+                                      ▼
+                         cheap buy vs highest other ask
+                                      │
+                         + медиана sales на выходе
+                                      ▼
+                              Telegram paper-алерт
+                         [ Купить MRKT ] [ Купить Tonnel ]
+```
+
+---
+
+## Быстрый старт
 
 ```bash
-cp .env.example .env   # один раз
-make start             # up -d --build
+cp .env.example .env   # заполни секреты
+make start             # Docker: build + up -d
 make logs
-make stop
-make clean             # stop + образ + volume
 ```
 
-В `.env`: `TELEGRAM_BOT_TOKEN`, `OPERATOR_TELEGRAM_ID`, `TOKEN_ENCRYPTION_KEY`.  
-Токены MRKT/Portals и watch-слоты — в **Mini App**.  
-Getgems: `GETGEMS_API_KEY` (Read API, без Mini App).  
-Tonnel: витрина без логина; comps — `TONNEL_INITDATA` (Telegram initData). Запросы с Chrome TLS (не Go `net/http`). Если всё ещё 403 — репутация IP (VPS/Docker), не ридер.  
-Ёмкость слотов (нагрузочный прогон): `docs/listing-capacity.canvas.tsx`.  
-Для кнопки Mini App в `/start`: `MINIAPP_PUBLIC_URL=https://…` (туннель).
+В `.env` минимум:
 
-Локальная отладка API без Telegram (в `.env`):
+| Переменная | Зачем |
+| :---: | :---: |
+| `TELEGRAM_BOT_TOKEN` | бот |
+| `OPERATOR_TELEGRAM_ID` | твой numeric id |
+| `TOKEN_ENCRYPTION_KEY` | AES для токенов в Bbolt |
 
-```
+Дальше в личке бота:
+
+1. `/start` → Mini App
+2. Вставить **MRKT** / **Portals** токены
+3. Добавить watch-слоты (коллекция обязательна)
+4. Для кнопки Mini App в `/start`: `MINIAPP_PUBLIC_URL=https://…` (туннель)
+
+Стоп: `make stop`. Снести контейнер + volume: `make clean` (`.env` не трогает).
+
+---
+
+## Маркеты
+
+| Маркет | Asks | Comps (sales) | Откуда креды |
+| :---: | :---: | :---: | :---: |
+| **MRKT** | да | да | Mini App / `MRKT_TOKEN` |
+| **Portals** | да | да | Mini App / `PORTALS_TMA` |
+| **Getgems** | да | да | `GETGEMS_API_KEY` ([Read API](https://api.getgems.io/public-api/docs)) |
+| **Tonnel** | да, без логина | `TONNEL_INITDATA` | `.env`; выключить: `TONNEL_DISABLED=1` |
+
+Tonnel ходит с **Chrome TLS** (не обычный Go `net/http`). Если Cloudflare всё ещё 403 — это IP (VPS/Docker), не ридер.
+
+---
+
+## Make
+
+| Команда | Что делает |
+| :---: | :---: |
+| `make start` | собрать и запустить |
+| `make logs` | логи |
+| `make stop` | остановить |
+| `make clean` | stop + образ + volume |
+
+Mini App слушает `:8080` (`MINIAPP_PORT`).
+
+---
+
+## Алерты
+
+В чат только полный сигнал: net после fee проходит и по **лучшему ask** на выходе, и по **медиане sales**. Слабые / no_sales в чат не идут.
+
+Кнопки ведут на лот buy-маркета и на ask sell-маркета. TON/USDT в тексте — справочный курс CMC Gram, на триггер не влияет.
+
+Ёмкость слотов (сколько коллекций/лотов тянет poll): [`docs/listing-capacity.canvas.tsx`](docs/listing-capacity.canvas.tsx).
+
+---
+
+## Mini App без Telegram
+
+Локальная отладка API (в `.env`):
+
+```bash
 MINIAPP_DEV=1
 MINIAPP_DEV_USER_ID=<твой id>
 ```
