@@ -1,0 +1,22 @@
+{
+  "gifts": [
+    {
+      "id": "lot-cheap",
+      "collection": "Lunar Snake",
+      "model": "Albino",
+      "backdrop": "Black",
+      "symbol": "Star",
+      "number": 42,
+      "price_ton": 90,
+      "url": "https://t.me/mrkt/lot/cheap"
+    },
+    {
+      "id": "lot-mid",
+      "collection": "Lunar Snake",
+      "model": "Albino",
+      "number": 7,
+      "price_ton": 100
+    }
+  ],
+  "cursor": "page-2"
+}

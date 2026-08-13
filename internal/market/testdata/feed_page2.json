@@ -1,0 +1,15 @@
+{
+  "items": [
+    {
+      "type": "sale",
+      "amount": 16000000000,
+      "date": "2026-08-05T07:00:00Z",
+      "gift": {
+        "collectionName": "Astral Shard",
+        "modelName": "Ether",
+        "backdropName": "Black"
+      }
+    }
+  ],
+  "cursor": ""
+}

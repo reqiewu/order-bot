@@ -1,0 +1,6 @@
+[
+  {"name": "Lunar Snake", "title": "Lunar Snake", "floorPriceNanoTons": 12000000000, "volume": 100000000000},
+  {"name": "Durov Cap", "title": "Durov's Cap", "floorPriceNanoTons": 500000000000, "volume": 9000000000000},
+  {"name": "Ice Cream", "title": "Ice Cream", "floorPriceNanoTons": 3000000000, "volume": 50000000000},
+  {"name": "Loot Bag", "title": "Loot Bag", "floorPriceNanoTons": 8000000000, "volume": 2000000000000}
+]

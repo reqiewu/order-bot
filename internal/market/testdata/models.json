@@ -1,0 +1,7 @@
+{
+  "models": [
+    {"name": "Albino", "title": "Albino"},
+    {"name": "Gold", "title": "Gold"},
+    {"name": "Black", "title": "Black Snake"}
+  ]
+}

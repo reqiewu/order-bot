@@ -1,0 +1,71 @@
+{
+  "items": [
+    {
+      "type": "sale",
+      "amount": 14800000000,
+      "date": "2026-08-05T12:14:08.10143Z",
+      "gift": {
+		"id": "sale-1",
+        "collectionName": "Astral Shard",
+        "modelName": "Ether",
+        "backdropName": "Black",
+        "number": 101
+      }
+    },
+    {
+      "type": "listing",
+      "amount": 20000000000,
+      "date": "2026-08-05T12:10:00Z",
+      "gift": {
+        "collectionName": "Astral Shard",
+        "modelName": "Ether",
+        "backdropName": "Black"
+      }
+    },
+    {
+      "type": "sale",
+      "amount": 13100000000,
+      "date": "2026-08-05T11:00:00Z",
+      "gift": {
+        "collectionName": "Astral Shard",
+        "modelName": "Ether",
+        "backdropName": "Black",
+        "number": 202
+      }
+    },
+    {
+      "type": "sale",
+      "amount": 15000000000,
+      "date": "2026-08-05T10:00:00Z",
+      "gift": {
+        "collectionName": "Astral Shard",
+        "modelName": "Ether",
+        "backdropName": "Black",
+        "number": 303
+      }
+    },
+    {
+      "type": "sale",
+      "amount": 9000000000,
+      "date": "2026-08-05T09:00:00Z",
+      "gift": {
+        "collectionName": "Astral Shard",
+        "modelName": "Ether",
+        "backdropName": "Gold",
+        "number": 404
+      }
+    },
+    {
+      "type": "sale",
+      "amount": 9900000000,
+      "date": "2026-08-05T08:00:00Z",
+      "gift": {
+        "collectionName": "Astral Shard",
+        "modelName": "Other",
+        "backdropName": "Black",
+        "number": 505
+      }
+    }
+  ],
+  "cursor": "cursor-page-2"
+}

@@ -1,0 +1,33 @@
+{
+  "results": [
+    {
+      "id": "019fc99b-8f27-75d2-a718-02f3b8291f6d",
+      "tg_id": "LunarSnake-197233",
+      "collection_id": "a4b271b4-efa3-4854-b53f-9ae6f3ecac59",
+      "external_collection_number": 197233,
+      "name": "Lunar Snake",
+      "price": "3",
+      "attributes": [
+        {"type": "model", "value": "Albino", "rarity_per_mille": 1.5},
+        {"type": "symbol", "value": "Candle", "rarity_per_mille": 1.5},
+        {"type": "backdrop", "value": "Black", "rarity_per_mille": 1.5}
+      ],
+      "status": "listed",
+      "photo_url": "https://example.test/lunarsnake.png",
+      "floor_price": "2.99"
+    },
+    {
+      "id": "lot-mid",
+      "tg_id": "LunarSnake-100",
+      "external_collection_number": 100,
+      "name": "Lunar Snake",
+      "price": "4.5",
+      "attributes": [
+        {"type": "model", "value": "Albino", "rarity_per_mille": 1.5},
+        {"type": "backdrop", "value": "Black", "rarity_per_mille": 1.5}
+      ],
+      "status": "listed"
+    }
+  ],
+  "total_count": 2
+}

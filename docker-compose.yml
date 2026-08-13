@@ -1,0 +1,13 @@
+services:
+  order-bot:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      BOLT_PATH: /data/order-bot.db
+    volumes:
+      - orderdata:/data
+
+volumes:
+  orderdata:

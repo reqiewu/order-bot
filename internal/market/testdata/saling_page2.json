@@ -1,0 +1,11 @@
+{
+  "gifts": [
+    {
+      "id": "lot-high",
+      "collection": "Lunar Snake",
+      "model": "Albino",
+      "price_ton": 120
+    }
+  ],
+  "cursor": null
+}
