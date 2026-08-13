@@ -1,10 +1,10 @@
 package engine
 
 import (
-	"log/slog"
 	"sync"
 	"time"
 
+	"github.com/reqiewu/order-bot/internal/applog"
 	"github.com/reqiewu/order-bot/internal/catalog"
 	"github.com/reqiewu/order-bot/internal/giftid"
 	"github.com/reqiewu/order-bot/internal/money"
@@ -25,6 +25,7 @@ type Signal struct {
 	SellMarket  string
 	Lot         catalog.Lot
 	BestAsk     money.NanoTON
+	SellURL     string // URL лучшего ask на sell-маркете
 	Undercut    money.NanoTON
 	SalesMedian money.NanoTON
 	NetAsk      money.NanoTON
@@ -104,31 +105,46 @@ func (d *MemoryDeduper) ForgetMissing(market string, liveIDs map[string]struct{}
 
 // Engine держит книги и считает кросс Portals↔MRKT.
 type Engine struct {
-	log    *slog.Logger
-	fees   spread.Fees
-	sales  SalesFunc
-	alert  Alerter
-	dedup  Deduper
+	log   *applog.Logger
+	fees  spread.Fees
+	sales SalesFunc
+	alert Alerter
+	dedup Deduper
 
-	mu   sync.Mutex
-	book map[string]map[string]catalog.Lot // market → listingID → lot
+	mu        sync.Mutex
+	book      map[string]map[string]catalog.Lot // market → listingID → lot
+	watchLive map[string]map[string]struct{}   // market\0watchID → listingIDs
 }
 
-func New(log *slog.Logger, fees spread.Fees, sales SalesFunc, alert Alerter, dedup Deduper) *Engine {
+func New(log *applog.Logger, fees spread.Fees, sales SalesFunc, alert Alerter, dedup Deduper) *Engine {
 	if log == nil {
-		log = slog.Default()
+		log = applog.Nop()
 	}
 	if dedup == nil {
 		dedup = NewMemoryDeduper()
 	}
 	return &Engine{
-		log:   log,
-		fees:  fees,
-		sales: sales,
-		alert: alert,
-		dedup: dedup,
-		book:  map[string]map[string]catalog.Lot{},
+		log:       log,
+		fees:      fees,
+		sales:     sales,
+		alert:     alert,
+		dedup:     dedup,
+		book:      map[string]map[string]catalog.Lot{},
+		watchLive: map[string]map[string]struct{}{},
 	}
+}
+
+// SetFees обновляет пороги (из Mini App runtime).
+func (e *Engine) SetFees(f spread.Fees) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.fees = f
+}
+
+func (e *Engine) getFees() spread.Fees {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.fees
 }
 
 func (e *Engine) Handle(ev MarketEvent) {
@@ -136,14 +152,20 @@ func (e *Engine) Handle(ev MarketEvent) {
 	if e.book[ev.Market] == nil {
 		e.book[ev.Market] = map[string]catalog.Lot{}
 	}
-	// replace: удалить лоты этого watch? для простоты v1 — merge/replace by listing id from event,
-	// и пометить live set для forget. Полный replace маркета по watch требует метки watch на лоте.
+	watchKey := ev.Market + "\x00" + ev.WatchID
+	prevLive := e.watchLive[watchKey]
 	live := map[string]struct{}{}
 	for _, lot := range ev.Listings {
 		lot.Market = ev.Market
 		e.book[ev.Market][lot.ListingID] = lot
 		live[lot.ListingID] = struct{}{}
 	}
+	for id := range prevLive {
+		if _, ok := live[id]; !ok {
+			delete(e.book[ev.Market], id)
+		}
+	}
+	e.watchLive[watchKey] = live
 	// снимок для расчёта вне лока
 	buyMarket := ev.Market
 	candidates := append([]catalog.Lot(nil), ev.Listings...)
@@ -174,14 +196,15 @@ func otherMarket(m string) string {
 
 func (e *Engine) evalLot(lot catalog.Lot, sellMarket string) {
 	e.mu.Lock()
-	bestAsk, collFloor, ok := e.bestAskLocked(sellMarket, lot.ModelBG)
+	bestAsk, sellURL, collFloor, ok := e.bestAskLocked(sellMarket, lot.ModelBG)
 	e.mu.Unlock()
 	if !ok {
 		e.dedup.Remember(lot.Market, lot.ListingID, lot.Price, false)
 		return
 	}
 
-	askEval := spread.EvalFromAsk(lot.Price, bestAsk, e.fees)
+	fees := e.getFees()
+	askEval := spread.EvalFromAsk(lot.Price, bestAsk, fees)
 	if !askEval.Triggered {
 		e.dedup.Remember(lot.Market, lot.ListingID, lot.Price, false)
 		return
@@ -195,7 +218,7 @@ func (e *Engine) evalLot(lot catalog.Lot, sellMarket string) {
 		e.log.Debug("sales fetch failed", "err", err, "lot", lot.ListingID)
 		return
 	}
-	salesEval := spread.EvalFromSales(lot.Price, raw, bestAsk, e.fees)
+	salesEval := spread.EvalFromSales(lot.Price, raw, bestAsk, fees)
 	triggered := spread.FullTrigger(askEval, salesEval)
 	if !triggered {
 		e.dedup.Remember(lot.Market, lot.ListingID, lot.Price, false)
@@ -214,6 +237,7 @@ func (e *Engine) evalLot(lot catalog.Lot, sellMarket string) {
 		SellMarket:  sellMarket,
 		Lot:         lot,
 		BestAsk:     askEval.BestAsk,
+		SellURL:     sellURL,
 		Undercut:    askEval.Undercut,
 		SalesMedian: salesEval.Median,
 		NetAsk:      askEval.Net,
@@ -226,7 +250,7 @@ func (e *Engine) evalLot(lot catalog.Lot, sellMarket string) {
 	}
 }
 
-func (e *Engine) bestAskLocked(market string, key catalog.ModelBG) (best money.NanoTON, collFloor money.NanoTON, ok bool) {
+func (e *Engine) bestAskLocked(market string, key catalog.ModelBG) (best money.NanoTON, sellURL string, collFloor money.NanoTON, ok bool) {
 	lots := e.book[market]
 	want := key.Key()
 	coll := giftid.Fold(key.Collection)
@@ -243,8 +267,9 @@ func (e *Engine) bestAskLocked(market string, key catalog.ModelBG) (best money.N
 		}
 		if !ok || lot.Price < best {
 			best = lot.Price
+			sellURL = lot.URL
 			ok = true
 		}
 	}
-	return best, collFloor, ok
+	return best, sellURL, collFloor, ok
 }

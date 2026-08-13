@@ -25,10 +25,10 @@ func (k ModelBG) String() string {
 
 // WatchSlot — whitelist-слот (коллекция обязательна).
 type WatchSlot struct {
-	ID         string
-	Collection string
-	Model      string // optional
-	Backdrop   string // optional
+	ID         string `json:"id"`
+	Collection string `json:"collection"`
+	Model      string `json:"model"`
+	Backdrop   string `json:"backdrop"`
 }
 
 func (s WatchSlot) Valid() bool {
