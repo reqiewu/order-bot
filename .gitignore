@@ -4,3 +4,13 @@
 /bin/
 /data/
 *.db
+
+# Local agent / editor scaffolding (not product code)
+.agents/
+.cursor/
+.docs/
+docs/
+context
+agents
+CONTEXT.md
+AGENTS.md
