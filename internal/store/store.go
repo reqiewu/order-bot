@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/reqiewu/order-bot/internal/catalog"
 	"go.etcd.io/bbolt"
@@ -15,18 +16,19 @@ var (
 	bucketSlots = []byte("watch_slots")
 )
 
-// Store — Bbolt для whitelist/настроек (токены — позже encrypted).
+// Store — Bbolt для whitelist/настроек/токенов.
 type Store struct {
-	db *bbolt.DB
+	db     *bbolt.DB
+	encKey []byte
 }
 
 func Open(path string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil && filepath.Dir(path) != "." {
 		return nil, err
 	}
-	db, err := bbolt.Open(path, 0o600, nil)
+	db, err := bbolt.Open(path, 0o600, &bbolt.Options{Timeout: 2 * time.Second})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("bolt open %s: %w (уже запущен другой order-bot?)", path, err)
 	}
 	s := &Store{db: db}
 	err = db.Update(func(tx *bbolt.Tx) error {
