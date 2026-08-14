@@ -9,14 +9,14 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/reqiewu/order-bot/internal/marketport"
 	"github.com/reqiewu/order-bot/internal/giftid"
+	"github.com/reqiewu/order-bot/internal/marketport"
 )
 
 const (
-	defaultBaseURL  = "https://api.tgmrkt.io"
-	// defaultMaxPages — safety-cap страниц (полный стакан до конца или cap).
-	defaultMaxPages = 500
+	defaultBaseURL = "https://api.tgmrkt.io"
+	// defaultMaxPages — safety-cap; обычно останавливаемся раньше по ListLimit.
+	defaultMaxPages = 20
 	pageSize        = 20
 )
 
@@ -25,19 +25,21 @@ type Market = marketport.MarketReader
 
 // Config — настройки HTTP-клиента MRKT.
 type Config struct {
-	BaseURL  string
-	Auth     TokenProvider
-	HTTP     *http.Client
-	MaxPages int
+	BaseURL   string
+	Auth      TokenProvider
+	HTTP      *http.Client
+	MaxPages  int
+	ListLimit int // топ N дешёвых; 0 = DefaultListLimit
 }
 
 // MRKT — неофициальный HTTP-адаптер маркета MRKT.
 type MRKT struct {
-	baseURL  string
-	auth     TokenProvider
-	http     *http.Client
-	maxPages int
-	gate     mrktGate
+	baseURL   string
+	auth      TokenProvider
+	http      *http.Client
+	maxPages  int
+	listLimit int
+	gate      mrktGate
 }
 
 // NewMRKT создаёт клиент Market для MRKT.
@@ -54,13 +56,20 @@ func NewMRKT(cfg Config) *MRKT {
 	if maxPages <= 0 {
 		maxPages = defaultMaxPages
 	}
+	listLimit := cfg.ListLimit
+	if listLimit <= 0 {
+		listLimit = marketport.DefaultListLimit
+	}
 	return &MRKT{
-		baseURL:  base,
-		auth:     cfg.Auth,
-		http:     httpClient,
-		maxPages: maxPages,
+		baseURL:   base,
+		auth:      cfg.Auth,
+		http:      httpClient,
+		maxPages:  maxPages,
+		listLimit: listLimit,
 	}
 }
+
+func (m *MRKT) Enabled() bool { return m != nil && tokenPresent(m.auth) }
 
 // Ensure MRKT satisfies the inner MarketReader port.
 var _ marketport.MarketReader = (*MRKT)(nil)
@@ -152,7 +161,7 @@ func (m *MRKT) List(ctx context.Context, watch marketport.WatchItem) ([]marketpo
 
 	var out []marketport.Listing
 	cursor := ""
-	for page := 0; page < m.maxPages; page++ {
+	for page := 0; page < m.maxPages && len(out) < m.listLimit; page++ {
 		reqBody := salingRequest{
 			CollectionNames: []string{names.Collection},
 			ModelNames:      models,
@@ -174,6 +183,9 @@ func (m *MRKT) List(ctx context.Context, watch marketport.WatchItem) ([]marketpo
 				continue
 			}
 			out = append(out, listing)
+			if len(out) >= m.listLimit {
+				break
+			}
 		}
 		next := string(resp.Cursor)
 		if next == "" || next == cursor {
@@ -181,7 +193,7 @@ func (m *MRKT) List(ctx context.Context, watch marketport.WatchItem) ([]marketpo
 		}
 		cursor = next
 	}
-	return out, nil
+	return marketport.TakeCheapest(out, m.listLimit), nil
 }
 
 func (m *MRKT) postSaling(ctx context.Context, token string, body salingRequest) (*salingResponse, error) {

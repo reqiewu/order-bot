@@ -27,14 +27,24 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
 export type TokenStatus = {
   mrkt_set: boolean;
   portals_set: boolean;
+  getgems_set?: boolean;
+  tonnel_set?: boolean;
   mrkt_live?: boolean;
   portals_live?: boolean;
+  getgems_live?: boolean;
+  tonnel_live?: boolean;
   mrkt_stored?: boolean;
   portals_stored?: boolean;
+  getgems_stored?: boolean;
+  tonnel_stored?: boolean;
   mrkt_ok?: boolean;
   portals_ok?: boolean;
+  getgems_ok?: boolean;
+  tonnel_ok?: boolean;
   mrkt_error?: string;
   portals_error?: string;
+  getgems_error?: string;
+  tonnel_error?: string;
 };
 
 export type Runtime = {
@@ -56,14 +66,21 @@ export function getTokens(probe = false) {
   return api<TokenStatus>(`/api/settings/tokens${qs}`);
 }
 
-export function putTokens(body: { mrkt_token?: string; portals_tma?: string }) {
+export type TokenBody = {
+  mrkt_token?: string;
+  portals_tma?: string;
+  getgems_api_key?: string;
+  tonnel_initdata?: string;
+};
+
+export function putTokens(body: TokenBody) {
   return api<TokenStatus & { ok: boolean }>('/api/settings/tokens', {
     method: 'PUT',
     body: JSON.stringify(body),
   });
 }
 
-export function probeTokens(body?: { mrkt_token?: string; portals_tma?: string }) {
+export function probeTokens(body?: TokenBody) {
   return api<TokenStatus & { ok: boolean }>('/api/settings/tokens/probe', {
     method: 'POST',
     body: JSON.stringify(body ?? {}),
@@ -82,6 +99,14 @@ export function normalizePortalsPaste(raw: string): string {
   if (/^authorization:\s*/i.test(s)) s = s.replace(/^authorization:\s*/i, '').trim();
   if (/^tma\s+/i.test(s)) s = s.replace(/^tma\s+/i, '').trim();
   return s;
+}
+
+export function normalizeGetgemsPaste(raw: string): string {
+  return normalizeMRKTPaste(raw);
+}
+
+export function normalizeTonnelPaste(raw: string): string {
+  return normalizePortalsPaste(raw);
 }
 
 export function getRuntime() {

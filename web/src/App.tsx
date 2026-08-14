@@ -23,6 +23,8 @@ import {
   giftPreviewURL,
   normalizeMRKTPaste,
   normalizePortalsPaste,
+  normalizeGetgemsPaste,
+  normalizeTonnelPaste,
   probeTokens,
   putRuntime,
   putTokens,
@@ -30,6 +32,7 @@ import {
   type BackdropInfo,
   type GiftRow,
   type Runtime,
+  type TokenBody,
   type TokenStatus,
   type WatchSlot,
 } from './api';
@@ -46,7 +49,9 @@ export function App() {
 
   const [mrkt, setMrkt] = useState('');
   const [portals, setPortals] = useState('');
-  const [pollSec, setPollSec] = useState('90');
+  const [getgems, setGetgems] = useState('');
+  const [tonnel, setTonnel] = useState('');
+  const [pollSec, setPollSec] = useState('1');
   const [minProfit, setMinProfit] = useState('0.1');
   const [minSpreadPct, setMinSpreadPct] = useState('5');
 
@@ -167,12 +172,16 @@ export function App() {
     setErr(null);
     setTokenBusy(true);
     try {
-      const body: { mrkt_token?: string; portals_tma?: string } = {};
+      const body: TokenBody = {};
       const m = normalizeMRKTPaste(mrkt);
       const p = normalizePortalsPaste(portals);
+      const g = normalizeGetgemsPaste(getgems);
+      const tn = normalizeTonnelPaste(tonnel);
       if (m) body.mrkt_token = m;
       if (p) body.portals_tma = p;
-      if (!body.mrkt_token && !body.portals_tma) {
+      if (g) body.getgems_api_key = g;
+      if (tn) body.tonnel_initdata = tn;
+      if (!body.mrkt_token && !body.portals_tma && !body.getgems_api_key && !body.tonnel_initdata) {
         setErr('Вставь хотя бы один токен');
         return;
       }
@@ -180,7 +189,9 @@ export function App() {
       setTokens(await getTokens(true));
       setMrkt('');
       setPortals('');
-      if (t.mrkt_ok === false || t.portals_ok === false) {
+      setGetgems('');
+      setTonnel('');
+      if (t.mrkt_ok === false || t.portals_ok === false || t.getgems_ok === false || t.tonnel_ok === false) {
         setErr('Сохранено, но проверка не прошла — см. статус');
       }
     } catch (e) {
@@ -193,22 +204,39 @@ export function App() {
   async function checkTokens() {
     setErr(null);
     setTokenBusy(true);
-    const prevMrktSet = tokens?.mrkt_set ?? false;
-    const prevPortalsSet = tokens?.portals_set ?? false;
+    const prev = tokens;
     try {
-      const body: { mrkt_token?: string; portals_tma?: string } = {};
+      const body: TokenBody = {};
       const m = normalizeMRKTPaste(mrkt);
       const p = normalizePortalsPaste(portals);
+      const g = normalizeGetgemsPaste(getgems);
+      const tn = normalizeTonnelPaste(tonnel);
       if (m) body.mrkt_token = m;
       if (p) body.portals_tma = p;
+      if (g) body.getgems_api_key = g;
+      if (tn) body.tonnel_initdata = tn;
       const res = await probeTokens(Object.keys(body).length ? body : undefined);
       setTokens({
-        mrkt_set: res.mrkt_set ?? prevMrktSet,
-        portals_set: res.portals_set ?? prevPortalsSet,
+        mrkt_set: res.mrkt_set ?? prev?.mrkt_set ?? false,
+        portals_set: res.portals_set ?? prev?.portals_set ?? false,
+        getgems_set: res.getgems_set ?? prev?.getgems_set ?? false,
+        tonnel_set: res.tonnel_set ?? prev?.tonnel_set ?? false,
+        mrkt_live: res.mrkt_live ?? prev?.mrkt_live,
+        portals_live: res.portals_live ?? prev?.portals_live,
+        getgems_live: res.getgems_live ?? prev?.getgems_live,
+        tonnel_live: res.tonnel_live ?? prev?.tonnel_live,
+        mrkt_stored: res.mrkt_stored ?? prev?.mrkt_stored,
+        portals_stored: res.portals_stored ?? prev?.portals_stored,
+        getgems_stored: res.getgems_stored ?? prev?.getgems_stored,
+        tonnel_stored: res.tonnel_stored ?? prev?.tonnel_stored,
         mrkt_ok: res.mrkt_ok,
         portals_ok: res.portals_ok,
+        getgems_ok: res.getgems_ok,
+        tonnel_ok: res.tonnel_ok,
         mrkt_error: res.mrkt_error,
         portals_error: res.portals_error,
+        getgems_error: res.getgems_error,
+        tonnel_error: res.tonnel_error,
       });
     } catch (e) {
       setErr((e as Error).message);
@@ -304,7 +332,7 @@ export function App() {
   return (
     <List>
       <Section header="order-bot">
-        <Cell subtitle="Paper снайп · Portals ↔ MRKT">
+        <Cell subtitle="Paper снайп · Portals ↔ MRKT ↔ Getgems ↔ Tonnel">
           <Text weight="2">Настройки</Text>
         </Cell>
         {err ? (
@@ -314,7 +342,10 @@ export function App() {
         ) : null}
       </Section>
 
-      <Section header="Токены" footer="MRKT: UUID access_token, не JWT. Portals: initData из Mini App.">
+      <Section
+        header="Токены"
+        footer="MRKT_TOKEN, PORTALS_TOKEN, GETGEMS_TOKEN, TONNEL_TOKEN — пусто = рынок выкл."
+      >
         <Cell
           after={<TokenMark ok={tokens?.mrkt_ok} />}
           subtitle={tokenSubtitle(
@@ -351,10 +382,10 @@ export function App() {
             tokens?.portals_error,
           )}
         >
-          Portals TMA
+          Portals
         </Cell>
         <Input
-          header="Portals initData"
+          header="Portals token"
           type="password"
           autoComplete="off"
           placeholder="user=%7B%22id%22%3A…&auth_date=…&hash=…"
@@ -365,6 +396,58 @@ export function App() {
             if (!text) return;
             e.preventDefault();
             setPortals(normalizePortalsPaste(text));
+          }}
+        />
+        <Cell
+          after={<TokenMark ok={tokens?.getgems_ok} />}
+          subtitle={tokenSubtitle(
+            tokens?.getgems_set,
+            tokens?.getgems_ok,
+            tokens?.getgems_live,
+            tokens?.getgems_stored,
+            tokens?.getgems_error,
+          )}
+        >
+          Getgems
+        </Cell>
+        <Input
+          header="Getgems token"
+          type="password"
+          autoComplete="off"
+          placeholder="Read API key from api.getgems.io"
+          value={getgems}
+          onChange={(e) => setGetgems(e.target.value)}
+          onPaste={(e) => {
+            const text = e.clipboardData.getData('text');
+            if (!text) return;
+            e.preventDefault();
+            setGetgems(normalizeGetgemsPaste(text));
+          }}
+        />
+        <Cell
+          after={<TokenMark ok={tokens?.tonnel_ok} />}
+          subtitle={tokenSubtitle(
+            tokens?.tonnel_set,
+            tokens?.tonnel_ok,
+            tokens?.tonnel_live,
+            tokens?.tonnel_stored,
+            tokens?.tonnel_error,
+          )}
+        >
+          Tonnel
+        </Cell>
+        <Input
+          header="Tonnel token"
+          type="password"
+          autoComplete="off"
+          placeholder="web-initData / Telegram Mini App initData"
+          value={tonnel}
+          onChange={(e) => setTonnel(e.target.value)}
+          onPaste={(e) => {
+            const text = e.clipboardData.getData('text');
+            if (!text) return;
+            e.preventDefault();
+            setTonnel(normalizeTonnelPaste(text));
           }}
         />
         <div style={{ padding: '8px 16px 16px', display: 'flex', gap: 8, flexDirection: 'column' }}>

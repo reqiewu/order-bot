@@ -19,7 +19,7 @@ func Load(path string) error {
 	defer f.Close()
 
 	sc := bufio.NewScanner(f)
-	// Portals TMA может быть длинным.
+	// Токены (Portals/Tonnel initData) могут быть длинными.
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())

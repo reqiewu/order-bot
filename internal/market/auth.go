@@ -97,6 +97,14 @@ func (m *MutableToken) Get() string {
 	return m.tok
 }
 
+func tokenPresent(auth TokenProvider) bool {
+	if auth == nil {
+		return false
+	}
+	tok, err := auth.Token(context.Background())
+	return err == nil && tok != ""
+}
+
 // UnauthorizedError — API отклонил учётные данные (например, HTTP 401).
 type UnauthorizedError struct {
 	Cause error
@@ -116,4 +124,3 @@ func IsUnauthorized(err error) bool {
 	var u *UnauthorizedError
 	return errors.As(err, &u)
 }
-

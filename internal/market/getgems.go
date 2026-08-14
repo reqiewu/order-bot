@@ -22,27 +22,31 @@ var errGetgemsNotFound = errors.New("market/getgems: not found")
 
 const (
 	defaultGetgemsBaseURL = "https://api.getgems.io/public-api/v1"
-	getgemsMaxPages       = 100
+	getgemsMaxPages       = 3 // быстрый poll: не весь стакан
 	getgemsPageSize       = 100
 	getgemsColCacheTTL    = 30 * time.Minute
-	getgemsListCacheTTL   = 20 * time.Second
+	getgemsListCacheTTL   = time.Second
 )
 
 // GetgemsConfig — Read API Getgems (нужен API key).
 type GetgemsConfig struct {
-	BaseURL  string
-	APIKey   string
-	HTTP     *http.Client
-	MaxPages int
+	BaseURL   string
+	APIKey    string
+	HTTP      *http.Client
+	MaxPages  int
+	ListLimit int
 }
 
 // Getgems — ридер Telegram Gifts на Getgems (листинги + activity/sold).
 type Getgems struct {
-	baseURL  string
-	apiKey   string
-	http     *http.Client
-	maxPages int
-	gate     getgemsGate
+	baseURL   string
+	http      *http.Client
+	maxPages  int
+	listLimit int
+	gate      getgemsGate
+
+	keyMu  sync.RWMutex
+	apiKey string
 
 	colMu      sync.Mutex
 	colByFold  map[string]string // fold(name) → collection address
@@ -65,15 +69,46 @@ func NewGetgems(cfg GetgemsConfig) *Getgems {
 	if maxPages <= 0 {
 		maxPages = getgemsMaxPages
 	}
+	listLimit := cfg.ListLimit
+	if listLimit <= 0 {
+		listLimit = marketport.DefaultListLimit
+	}
 	return &Getgems{
-		baseURL:  base,
-		apiKey:   strings.TrimSpace(cfg.APIKey),
-		http:     client,
-		maxPages: maxPages,
+		baseURL:   base,
+		apiKey:    strings.TrimSpace(cfg.APIKey),
+		http:      client,
+		maxPages:  maxPages,
+		listLimit: listLimit,
 	}
 }
 
 var _ marketport.MarketReader = (*Getgems)(nil)
+
+// SetAPIKey обновляет Read API key без рестарта (Mini App).
+func (g *Getgems) SetAPIKey(key string) {
+	if g == nil {
+		return
+	}
+	g.keyMu.Lock()
+	g.apiKey = strings.TrimSpace(key)
+	g.keyMu.Unlock()
+}
+
+// APIKey — текущий ключ (для Live-статуса Mini App).
+func (g *Getgems) APIKey() string {
+	if g == nil {
+		return ""
+	}
+	g.keyMu.RLock()
+	defer g.keyMu.RUnlock()
+	return g.apiKey
+}
+
+func (g *Getgems) HasAPIKey() bool {
+	return strings.TrimSpace(g.APIKey()) != ""
+}
+
+func (g *Getgems) Enabled() bool { return g != nil && g.HasAPIKey() }
 
 type getgemsListCacheEntry struct {
 	at    time.Time
@@ -174,7 +209,7 @@ func (g *Getgems) List(ctx context.Context, watch marketport.WatchItem) ([]marke
 		}
 		out = append(out, lot)
 	}
-	return out, nil
+	return marketport.TakeCheapest(out, g.listLimit), nil
 }
 
 func (g *Getgems) RecentSales(ctx context.Context, like marketport.Listing, limit int) ([]marketport.Sale, error) {
@@ -314,6 +349,9 @@ func (g *Getgems) listOnSale(ctx context.Context, colAddr string) ([]getgemsNFT,
 				seen[id] = struct{}{}
 				out = append(out, n)
 			}
+			if len(out) >= g.listLimit {
+				return out, nil
+			}
 			next := strings.TrimSpace(pg.Cursor)
 			if next == "" || next == cursor {
 				break
@@ -445,7 +483,8 @@ func (g *Getgems) post(ctx context.Context, path string, payload any) (json.RawM
 }
 
 func (g *Getgems) do(ctx context.Context, method, path string, q url.Values, payload any) (json.RawMessage, error) {
-	if strings.TrimSpace(g.apiKey) == "" {
+	apiKey := g.APIKey()
+	if apiKey == "" {
 		return nil, ErrEmptyToken
 	}
 	if err := g.gate.wait(ctx); err != nil {
@@ -468,7 +507,7 @@ func (g *Getgems) do(ctx context.Context, method, path string, q url.Values, pay
 		return nil, err
 	}
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Authorization", g.apiKey)
+	req.Header.Set("Authorization", apiKey)
 	req.Header.Set("User-Agent", "order-bot/1.0")
 	if payload != nil {
 		req.Header.Set("Content-Type", "application/json")

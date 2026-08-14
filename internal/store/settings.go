@@ -14,10 +14,12 @@ import (
 )
 
 const (
-	metaMRKTEnc     = "mrkt_token_enc"
-	metaPortalsEnc  = "portals_tma_enc"
-	metaPollSec     = "poll_interval_sec"
-	metaMinProfit   = "min_profit_nano"
+	metaMRKTEnc      = "mrkt_token_enc"
+	metaPortalsEnc   = "portals_tma_enc"
+	metaGetgemsEnc   = "getgems_api_key_enc"
+	metaTonnelEnc    = "tonnel_initdata_enc"
+	metaPollSec      = "poll_interval_sec"
+	metaMinProfit    = "min_profit_nano"
 	metaMinSpreadBPS = "min_spread_bps"
 )
 
@@ -107,6 +109,48 @@ func (s *Store) HasPortalsTMA() bool {
 	return v != ""
 }
 
+func (s *Store) PutGetgemsAPIKey(plain string) error {
+	enc, err := s.seal(plain)
+	if err != nil {
+		return err
+	}
+	return s.SetMeta(metaGetgemsEnc, enc)
+}
+
+func (s *Store) GetgemsAPIKey() (string, error) {
+	enc, err := s.GetMeta(metaGetgemsEnc)
+	if err != nil {
+		return "", err
+	}
+	return s.open(enc)
+}
+
+func (s *Store) HasGetgemsAPIKey() bool {
+	v, _ := s.GetMeta(metaGetgemsEnc)
+	return v != ""
+}
+
+func (s *Store) PutTonnelInitData(plain string) error {
+	enc, err := s.seal(plain)
+	if err != nil {
+		return err
+	}
+	return s.SetMeta(metaTonnelEnc, enc)
+}
+
+func (s *Store) TonnelInitData() (string, error) {
+	enc, err := s.GetMeta(metaTonnelEnc)
+	if err != nil {
+		return "", err
+	}
+	return s.open(enc)
+}
+
+func (s *Store) HasTonnelInitData() bool {
+	v, _ := s.GetMeta(metaTonnelEnc)
+	return v != ""
+}
+
 // Runtime — пороги и интервал из Bbolt (с дефолтами).
 type Runtime struct {
 	PollIntervalSec int   `json:"poll_interval_sec"`
@@ -116,7 +160,7 @@ type Runtime struct {
 
 func DefaultRuntime() Runtime {
 	return Runtime{
-		PollIntervalSec: 90,
+		PollIntervalSec: 1,
 		MinProfitNano:   int64(money.DefaultMinProfit),
 		MinSpreadBPS:    int(money.MinSpreadBPS),
 	}
@@ -125,7 +169,7 @@ func DefaultRuntime() Runtime {
 func (s *Store) GetRuntime() (Runtime, error) {
 	r := DefaultRuntime()
 	if v, err := s.GetMeta(metaPollSec); err == nil && v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n >= 10 {
+		if n, err := strconv.Atoi(v); err == nil && n >= 1 {
 			r.PollIntervalSec = n
 		}
 	}
@@ -143,8 +187,8 @@ func (s *Store) GetRuntime() (Runtime, error) {
 }
 
 func (s *Store) PutRuntime(r Runtime) error {
-	if r.PollIntervalSec < 10 {
-		return fmt.Errorf("store: poll_interval_sec min 10")
+	if r.PollIntervalSec < 1 {
+		return fmt.Errorf("store: poll_interval_sec min 1")
 	}
 	if r.MinSpreadBPS < 0 || r.MinProfitNano < 0 {
 		return fmt.Errorf("store: negative thresholds")

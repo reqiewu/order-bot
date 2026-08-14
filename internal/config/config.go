@@ -9,32 +9,46 @@ import (
 )
 
 type Config struct {
-	TelegramToken  string
-	OperatorID     int64
-	MRKTToken      string
-	PortalsTMA     string
-	GetgemsAPIKey  string
-	TonnelInitData string
-	TonnelBaseURL  string
-	TonnelDisabled bool
-	BoltPath       string
-	PollInterval   time.Duration
-	WatchJSON      string // optional bootstrap slots JSON array
-	LogLevel       string // debug|info|warn|error
+	TelegramToken   string
+	OperatorID      int64
+	MRKTToken       string
+	PortalsTMA      string
+	GetgemsAPIKey   string
+	TonnelInitData  string
+	TonnelBaseURL   string
+	TonnelDisabled  bool
+	TelegramAPIID   int
+	TelegramAPIHash string
+	TelegramSession string
+	TelegramUserOff bool // TELEGRAM_USER_DISABLED
+	BoltPath        string
+	PollInterval    time.Duration
+	WatchJSON       string // optional bootstrap slots JSON array
+	LogLevel        string // debug|info|warn|error
 }
 
 func FromEnv() (Config, error) {
 	cfg := Config{
-		TelegramToken:  strings.TrimSpace(os.Getenv("TELEGRAM_BOT_TOKEN")),
-		MRKTToken:      strings.TrimSpace(os.Getenv("MRKT_TOKEN")),
-		PortalsTMA:     strings.TrimSpace(os.Getenv("PORTALS_TMA")),
-		GetgemsAPIKey:  strings.TrimSpace(os.Getenv("GETGEMS_API_KEY")),
-		TonnelInitData: strings.TrimSpace(os.Getenv("TONNEL_INITDATA")),
-		TonnelBaseURL:  strings.TrimSpace(os.Getenv("TONNEL_BASE_URL")),
-		TonnelDisabled: envTruthy("TONNEL_DISABLED"),
-		BoltPath:       envOr("BOLT_PATH", "data/order-bot.db"),
-		WatchJSON:      strings.TrimSpace(os.Getenv("WATCH_SLOTS_JSON")),
-		LogLevel:       logLevelFromEnv(),
+		TelegramToken:   strings.TrimSpace(os.Getenv("TELEGRAM_BOT_TOKEN")),
+		MRKTToken:       envFirst("MRKT_TOKEN"),
+		PortalsTMA:      envFirst("PORTALS_TOKEN", "PORTALS_TMA"),
+		GetgemsAPIKey:   envFirst("GETGEMS_TOKEN", "GETGEMS_API_KEY"),
+		TonnelInitData:  envFirst("TONNEL_TOKEN", "TONNEL_INITDATA"),
+		TonnelBaseURL:   strings.TrimSpace(os.Getenv("TONNEL_BASE_URL")),
+		TonnelDisabled:  envTruthy("TONNEL_DISABLED"),
+		TelegramAPIHash: strings.TrimSpace(os.Getenv("TELEGRAM_API_HASH")),
+		TelegramSession: envOr("TELEGRAM_SESSION_PATH", "data/tg.session"),
+		TelegramUserOff: envTruthy("TELEGRAM_USER_DISABLED"),
+		BoltPath:        envOr("BOLT_PATH", "data/order-bot.db"),
+		WatchJSON:       strings.TrimSpace(os.Getenv("WATCH_SLOTS_JSON")),
+		LogLevel:        logLevelFromEnv(),
+	}
+	if v := strings.TrimSpace(os.Getenv("TELEGRAM_API_ID")); v != "" {
+		id, err := strconv.Atoi(v)
+		if err != nil || id <= 0 {
+			return cfg, fmt.Errorf("TELEGRAM_API_ID invalid")
+		}
+		cfg.TelegramAPIID = id
 	}
 	if v := strings.TrimSpace(os.Getenv("OPERATOR_TELEGRAM_ID")); v != "" {
 		id, err := strconv.ParseInt(v, 10, 64)
@@ -43,11 +57,11 @@ func FromEnv() (Config, error) {
 		}
 		cfg.OperatorID = id
 	}
-	sec := 90
+	sec := 1
 	if v := strings.TrimSpace(os.Getenv("POLL_INTERVAL_SEC")); v != "" {
 		n, err := strconv.Atoi(v)
-		if err != nil || n < 10 {
-			return cfg, fmt.Errorf("POLL_INTERVAL_SEC invalid")
+		if err != nil || n < 1 {
+			return cfg, fmt.Errorf("POLL_INTERVAL_SEC invalid (min 1)")
 		}
 		sec = n
 	}
@@ -61,10 +75,20 @@ func envTruthy(k string) bool {
 }
 
 func envOr(k, def string) string {
-	if v := strings.TrimSpace(os.Getenv(k)); v != "" {
+	if v := envFirst(k); v != "" {
 		return v
 	}
 	return def
+}
+
+// envFirst — первое непустое значение; несколько ключей = новое имя, потом старый alias.
+func envFirst(keys ...string) string {
+	for _, k := range keys {
+		if v := strings.TrimSpace(os.Getenv(k)); v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // LOG_LEVEL=debug|info|warn|error; LOG_DEBUG=1 — alias для debug.

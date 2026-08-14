@@ -20,10 +20,12 @@ import (
 	"github.com/reqiewu/order-bot/internal/store"
 )
 
-// TokenHooks обновляет live MutableToken после записи в store.
+// TokenHooks обновляет live credentials после записи в store.
 type TokenHooks struct {
 	OnMRKT    func(token string)
 	OnPortals func(tma string)
+	OnGetgems func(apiKey string)
+	OnTonnel  func(initData string)
 	OnRuntime func(r store.Runtime)
 }
 
@@ -36,9 +38,13 @@ type Deps struct {
 	GiftChanges *giftchanges.GiftChanges
 	MRKT        *market.MRKT
 	Portals     *market.Portals
+	Getgems     *market.Getgems
+	Tonnel      *market.Tonnel
 	// Live token getters — то, чем процесс реально ходит в API (env и/или bolt).
 	LiveMRKT    func() string
 	LivePortals func() string
+	LiveGetgems func() string
+	LiveTonnel  func() string
 }
 
 // Server — API + SPA.
@@ -131,11 +137,19 @@ func (s *Server) getTokens(w http.ResponseWriter, r *http.Request, _ int64) {
 		status := s.probeLiveTokens(r.Context())
 		out["mrkt_ok"] = status.MRKTOk
 		out["portals_ok"] = status.PortalsOk
+		out["getgems_ok"] = status.GetgemsOk
+		out["tonnel_ok"] = status.TonnelOk
 		if status.MRKTErr != "" {
 			out["mrkt_error"] = status.MRKTErr
 		}
 		if status.PortalsErr != "" {
 			out["portals_error"] = status.PortalsErr
+		}
+		if status.GetgemsErr != "" {
+			out["getgems_error"] = status.GetgemsErr
+		}
+		if status.TonnelErr != "" {
+			out["tonnel_error"] = status.TonnelErr
 		}
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -144,16 +158,25 @@ func (s *Server) getTokens(w http.ResponseWriter, r *http.Request, _ int64) {
 func (s *Server) tokenPresence() map[string]any {
 	liveMRKT := strings.TrimSpace(s.liveMRKT())
 	livePortals := strings.TrimSpace(s.livePortals())
+	liveGetgems := strings.TrimSpace(s.liveGetgems())
+	liveTonnel := strings.TrimSpace(s.liveTonnel())
 	storedMRKT := s.deps.Store.HasMRKTToken()
 	storedPortals := s.deps.Store.HasPortalsTMA()
+	storedGetgems := s.deps.Store.HasGetgemsAPIKey()
+	storedTonnel := s.deps.Store.HasTonnelInitData()
 	return map[string]any{
-		// «задан» = бот чем-то пользуется сейчас (env/bolt в памяти) или есть сохранённая копия
 		"mrkt_set":       liveMRKT != "" || storedMRKT,
 		"portals_set":    livePortals != "" || storedPortals,
+		"getgems_set":    liveGetgems != "" || storedGetgems,
+		"tonnel_set":     liveTonnel != "" || storedTonnel,
 		"mrkt_live":      liveMRKT != "",
 		"portals_live":   livePortals != "",
+		"getgems_live":   liveGetgems != "",
+		"tonnel_live":    liveTonnel != "",
 		"mrkt_stored":    storedMRKT,
 		"portals_stored": storedPortals,
+		"getgems_stored": storedGetgems,
+		"tonnel_stored":  storedTonnel,
 	}
 }
 
@@ -171,11 +194,35 @@ func (s *Server) livePortals() string {
 	return ""
 }
 
+func (s *Server) liveGetgems() string {
+	if s.deps.LiveGetgems != nil {
+		return s.deps.LiveGetgems()
+	}
+	if s.deps.Getgems != nil {
+		return s.deps.Getgems.APIKey()
+	}
+	return ""
+}
+
+func (s *Server) liveTonnel() string {
+	if s.deps.LiveTonnel != nil {
+		return s.deps.LiveTonnel()
+	}
+	if s.deps.Tonnel != nil {
+		return s.deps.Tonnel.InitData()
+	}
+	return ""
+}
+
 type tokenProbeStatus struct {
 	MRKTOk     bool
 	PortalsOk  bool
+	GetgemsOk  bool
+	TonnelOk   bool
 	MRKTErr    string
 	PortalsErr string
+	GetgemsErr string
+	TonnelErr  string
 }
 
 // probeLiveTokens проверяет credentials процесса (то, чем реально ходит ingress).
@@ -203,13 +250,35 @@ func (s *Server) probeLiveTokens(ctx context.Context) tokenProbeStatus {
 	} else {
 		st.PortalsOk = true
 	}
+
+	if s.liveGetgems() == "" {
+		st.GetgemsErr = "empty"
+	} else if s.deps.Getgems == nil {
+		st.GetgemsErr = "getgems client unavailable"
+	} else if err := s.deps.Getgems.CheckAuth(ctx); err != nil {
+		st.GetgemsErr = err.Error()
+	} else {
+		st.GetgemsOk = true
+	}
+
+	if s.liveTonnel() == "" {
+		st.TonnelErr = "empty"
+	} else if s.deps.Tonnel == nil {
+		st.TonnelErr = "tonnel client unavailable"
+	} else if err := market.ProbeTonnelInitData(ctx, s.liveTonnel()); err != nil {
+		st.TonnelErr = err.Error()
+	} else {
+		st.TonnelOk = true
+	}
 	return st
 }
 
 func (s *Server) probeTokens(w http.ResponseWriter, r *http.Request, _ int64) {
 	var body struct {
-		MRKTToken  *string `json:"mrkt_token"`
-		PortalsTMA *string `json:"portals_tma"`
+		MRKTToken      *string `json:"mrkt_token"`
+		PortalsTMA     *string `json:"portals_tma"`
+		GetgemsAPIKey  *string `json:"getgems_api_key"`
+		TonnelInitData *string `json:"tonnel_initdata"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
 
@@ -218,17 +287,23 @@ func (s *Server) probeTokens(w http.ResponseWriter, r *http.Request, _ int64) {
 	out := s.tokenPresence()
 	out["ok"] = true
 
-	// Вставленный текст — проверка кандидата до сохранения.
-	// Пустое тело — проверка live (env/bolt в процессе).
-	if body.MRKTToken == nil && body.PortalsTMA == nil {
+	if body.MRKTToken == nil && body.PortalsTMA == nil && body.GetgemsAPIKey == nil && body.TonnelInitData == nil {
 		st := s.probeLiveTokens(ctx)
 		out["mrkt_ok"] = st.MRKTOk
 		out["portals_ok"] = st.PortalsOk
+		out["getgems_ok"] = st.GetgemsOk
+		out["tonnel_ok"] = st.TonnelOk
 		if st.MRKTErr != "" {
 			out["mrkt_error"] = st.MRKTErr
 		}
 		if st.PortalsErr != "" {
 			out["portals_error"] = st.PortalsErr
+		}
+		if st.GetgemsErr != "" {
+			out["getgems_error"] = st.GetgemsErr
+		}
+		if st.TonnelErr != "" {
+			out["tonnel_error"] = st.TonnelErr
 		}
 		writeJSON(w, http.StatusOK, out)
 		return
@@ -258,20 +333,46 @@ func (s *Server) probeTokens(w http.ResponseWriter, r *http.Request, _ int64) {
 			out["portals_ok"] = true
 		}
 	}
+	if body.GetgemsAPIKey != nil {
+		tok := market.NormalizeGetgemsAPIKey(*body.GetgemsAPIKey)
+		if tok == "" {
+			out["getgems_ok"] = false
+			out["getgems_error"] = "empty"
+		} else if err := market.ProbeGetgems(ctx, tok); err != nil {
+			out["getgems_ok"] = false
+			out["getgems_error"] = err.Error()
+		} else {
+			out["getgems_ok"] = true
+		}
+	}
+	if body.TonnelInitData != nil {
+		tok := market.NormalizePortalsTMA(*body.TonnelInitData)
+		if tok == "" {
+			out["tonnel_ok"] = false
+			out["tonnel_error"] = "empty"
+		} else if err := market.ProbeTonnelInitData(ctx, tok); err != nil {
+			out["tonnel_ok"] = false
+			out["tonnel_error"] = err.Error()
+		} else {
+			out["tonnel_ok"] = true
+		}
+	}
 
 	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) putTokens(w http.ResponseWriter, r *http.Request, _ int64) {
 	var body struct {
-		MRKTToken  *string `json:"mrkt_token"`
-		PortalsTMA *string `json:"portals_tma"`
+		MRKTToken      *string `json:"mrkt_token"`
+		PortalsTMA     *string `json:"portals_tma"`
+		GetgemsAPIKey  *string `json:"getgems_api_key"`
+		TonnelInitData *string `json:"tonnel_initdata"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	if body.MRKTToken == nil && body.PortalsTMA == nil {
+	if body.MRKTToken == nil && body.PortalsTMA == nil && body.GetgemsAPIKey == nil && body.TonnelInitData == nil {
 		writeErr(w, http.StatusBadRequest, "nothing to save")
 		return
 	}
@@ -317,6 +418,44 @@ func (s *Server) putTokens(w http.ResponseWriter, r *http.Request, _ int64) {
 			s.deps.Hooks.OnPortals(tma)
 		}
 		out["portals_ok"] = true
+	}
+	if body.GetgemsAPIKey != nil {
+		key := market.NormalizeGetgemsAPIKey(*body.GetgemsAPIKey)
+		if key == "" {
+			writeErr(w, http.StatusBadRequest, "empty getgems_api_key")
+			return
+		}
+		if err := market.ProbeGetgems(ctx, key); err != nil {
+			writeErr(w, http.StatusBadRequest, "getgems api key invalid: "+err.Error())
+			return
+		}
+		if err := s.deps.Store.PutGetgemsAPIKey(key); err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if s.deps.Hooks.OnGetgems != nil {
+			s.deps.Hooks.OnGetgems(key)
+		}
+		out["getgems_ok"] = true
+	}
+	if body.TonnelInitData != nil {
+		initData := market.NormalizePortalsTMA(*body.TonnelInitData)
+		if initData == "" {
+			writeErr(w, http.StatusBadRequest, "empty tonnel_initdata")
+			return
+		}
+		if err := market.ProbeTonnelInitData(ctx, initData); err != nil {
+			writeErr(w, http.StatusBadRequest, "tonnel initData invalid: "+err.Error())
+			return
+		}
+		if err := s.deps.Store.PutTonnelInitData(initData); err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if s.deps.Hooks.OnTonnel != nil {
+			s.deps.Hooks.OnTonnel(initData)
+		}
+		out["tonnel_ok"] = true
 	}
 	for k, v := range s.tokenPresence() {
 		out[k] = v

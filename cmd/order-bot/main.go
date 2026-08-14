@@ -25,6 +25,7 @@ import (
 	"github.com/reqiewu/order-bot/internal/miniapp"
 	"github.com/reqiewu/order-bot/internal/notify"
 	"github.com/reqiewu/order-bot/internal/store"
+	"github.com/reqiewu/order-bot/internal/tguser"
 	"github.com/reqiewu/order-bot/internal/tokencrypto"
 )
 
@@ -99,29 +100,84 @@ func main() {
 		}
 	}
 
+	getgemsKey := market.NormalizeGetgemsAPIKey(cfg.GetgemsAPIKey)
+	if st.HasGetgemsAPIKey() {
+		if t, err := st.GetgemsAPIKey(); err == nil && t != "" {
+			probeCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			if err := market.ProbeGetgems(probeCtx, t); err == nil {
+				getgemsKey = t
+				log.Info("Getgems API key loaded from bolt")
+			} else {
+				log.Warn("Getgems API key in bolt is dead — using env if set", "err", err)
+				if getgemsKey == "" {
+					getgemsKey = t
+				}
+			}
+			cancel()
+		}
+	}
+	tonnelInit := market.NormalizePortalsTMA(cfg.TonnelInitData)
+	if st.HasTonnelInitData() {
+		if t, err := st.TonnelInitData(); err == nil && t != "" {
+			probeCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			if err := market.ProbeTonnelInitData(probeCtx, t); err == nil {
+				tonnelInit = t
+				log.Info("Tonnel initData loaded from bolt")
+			} else {
+				log.Warn("Tonnel initData in bolt is dead — using env if set", "err", err)
+				if tonnelInit == "" {
+					tonnelInit = t
+				}
+			}
+			cancel()
+		}
+	}
+
 	mrkt := market.NewMRKT(market.Config{Auth: mrktTok})
 	portals := market.NewPortals(market.PortalsConfig{Auth: portalsTok})
+	// Always construct so Mini App can enable Getgems without restart.
+	getgems := market.NewGetgems(market.GetgemsConfig{APIKey: getgemsKey})
 
 	readers := map[string]marketport.MarketReader{
 		marketport.MarketMRKT:    mrkt,
 		marketport.MarketPortals: portals,
-	}
-	var getgems *market.Getgems
-	if cfg.GetgemsAPIKey != "" {
-		getgems = market.NewGetgems(market.GetgemsConfig{APIKey: cfg.GetgemsAPIKey})
-		readers[marketport.MarketGetgems] = getgems
+		marketport.MarketGetgems: getgems,
 	}
 	var tonnel *market.Tonnel
 	if !cfg.TonnelDisabled {
 		tonnel = market.NewTonnel(market.TonnelConfig{
 			BaseURL:  cfg.TonnelBaseURL,
-			InitData: market.NormalizePortalsTMA(cfg.TonnelInitData),
+			InitData: tonnelInit,
 		})
 		readers[marketport.MarketTonnel] = tonnel
 	}
 
+	var tgMarket *market.Telegram
+	var tgUser *tguser.Client
+	if !cfg.TelegramUserOff && cfg.TelegramAPIID > 0 && cfg.TelegramAPIHash != "" {
+		var err error
+		tgUser, err = tguser.New(tguser.Config{
+			APIID:       cfg.TelegramAPIID,
+			APIHash:     cfg.TelegramAPIHash,
+			SessionPath: cfg.TelegramSession,
+		})
+		if err != nil {
+			log.Warn("Telegram user client", "err", err)
+		} else if !tgUser.HasSessionFile() {
+			log.Info("telegram market off — no session; go run ./cmd/tg-login")
+			tgUser = nil
+		} else {
+			tgMarket = market.NewTelegram(market.TelegramConfig{User: tgUser})
+			readers[marketport.MarketTelegram] = tgMarket
+		}
+	} else if cfg.TelegramUserOff {
+		log.Info("telegram market off")
+	} else {
+		log.Info("telegram market off — no TELEGRAM_API_ID / TELEGRAM_API_HASH")
+	}
+
 	probeCtx, cancelProbe := context.WithTimeout(context.Background(), 15*time.Second)
-	checkTokens(probeCtx, log, mrktTok, portalsTok, mrkt, portals, getgems, tonnel)
+	checkTokens(probeCtx, log, mrktTok, portalsTok, mrkt, portals, getgems, tonnel, nil)
 	cancelProbe()
 
 	slotsFn := func() []catalog.WatchSlot {
@@ -150,6 +206,29 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	if tgUser != nil {
+		go func() {
+			if err := tgUser.Run(ctx); err != nil && ctx.Err() == nil {
+				log.Warn("Telegram MTProto stopped", "err", err)
+			}
+		}()
+		waitCtx, cancelWait := context.WithTimeout(ctx, 45*time.Second)
+		if err := tgUser.WaitReady(waitCtx, 45*time.Second); err != nil {
+			log.Warn("Telegram MTProto not ready — venue skipped this boot", "err", err)
+			delete(readers, marketport.MarketTelegram)
+			tgMarket = nil
+		} else {
+			log.Info("Telegram MTProto ready (Gift Marketplace asks)")
+			probeCtx2, cancel2 := context.WithTimeout(ctx, 15*time.Second)
+			if err := tgMarket.CheckAuth(probeCtx2); err != nil {
+				log.Warn("Telegram getStarGifts failed", "err", err)
+			} else {
+				log.Info("Telegram getStarGifts ok")
+			}
+			cancel2()
+		}
+		cancelWait()
+	}
 	go func() {
 		for {
 			select {
@@ -169,15 +248,19 @@ func main() {
 		Log: log, Reader: ingress.Reader{Name: marketport.MarketPortals, Client: portals},
 		Slots: slotsFn, IntervalFn: intervalFn, Out: events,
 	}).Run(ctx)
-	if getgems != nil {
-		go (&ingress.Worker{
-			Log: log, Reader: ingress.Reader{Name: marketport.MarketGetgems, Client: getgems},
-			Slots: slotsFn, IntervalFn: intervalFn, Out: events,
-		}).Run(ctx)
-	}
+	go (&ingress.Worker{
+		Log: log, Reader: ingress.Reader{Name: marketport.MarketGetgems, Client: getgems},
+		Slots: slotsFn, IntervalFn: intervalFn, Out: events,
+	}).Run(ctx)
 	if tonnel != nil {
 		go (&ingress.Worker{
 			Log: log, Reader: ingress.Reader{Name: marketport.MarketTonnel, Client: tonnel},
+			Slots: slotsFn, IntervalFn: intervalFn, Out: events,
+		}).Run(ctx)
+	}
+	if tgMarket != nil {
+		go (&ingress.Worker{
+			Log: log, Reader: ingress.Reader{Name: marketport.MarketTelegram, Client: tgMarket},
 			Slots: slotsFn, IntervalFn: intervalFn, Out: events,
 		}).Run(ctx)
 	}
@@ -195,8 +278,17 @@ func main() {
 			GiftChanges: giftchanges.NewGiftChanges(),
 			MRKT:        mrkt,
 			Portals:     portals,
+			Getgems:     getgems,
+			Tonnel:      tonnel,
 			LiveMRKT:    mrktTok.Get,
 			LivePortals: portalsTok.Get,
+			LiveGetgems: getgems.APIKey,
+			LiveTonnel: func() string {
+				if tonnel == nil {
+					return ""
+				}
+				return tonnel.InitData()
+			},
 			Hooks: miniapp.TokenHooks{
 				OnMRKT: func(t string) {
 					mrktTok.SetMRKT(t)
@@ -204,7 +296,17 @@ func main() {
 				},
 				OnPortals: func(t string) {
 					portalsTok.Set(t)
-					log.Info("Portals TMA updated via Mini App")
+					log.Info("Portals token updated via Mini App")
+				},
+				OnGetgems: func(t string) {
+					getgems.SetAPIKey(t)
+					log.Info("Getgems token updated via Mini App")
+				},
+				OnTonnel: func(t string) {
+					if tonnel != nil {
+						tonnel.SetInitData(t)
+						log.Info("Tonnel token updated via Mini App")
+					}
 				},
 				OnRuntime: func(r store.Runtime) {
 					eng.SetFees(miniapp.FeesFromRuntime(r))
@@ -245,10 +347,12 @@ func main() {
 	log.Info("order-bot paper started",
 		"poll", intervalFn().String(),
 		"bolt", cfg.BoltPath,
-		"tg", cfg.TelegramToken != "" && cfg.OperatorID != 0,
+		"mrkt", mrkt.Enabled(),
+		"portals", portals.Enabled(),
+		"getgems", getgems.Enabled(),
+		"tonnel", tonnel != nil && tonnel.Enabled(),
+		"telegram", tgMarket != nil,
 		"miniapp", miniCfg.Enabled(),
-		"getgems", getgems != nil,
-		"tonnel", tonnel != nil,
 		"log", cfg.LogLevel,
 	)
 	<-ctx.Done()
@@ -263,9 +367,10 @@ func checkTokens(
 	portals *market.Portals,
 	getgems *market.Getgems,
 	tonnel *market.Tonnel,
+	_ *market.Telegram, // probed after MTProto ready
 ) {
 	if mrktTok.Get() == "" {
-		log.Warn("MRKT token empty — set in Mini App or MRKT_TOKEN")
+		log.Info("mrkt off — no MRKT_TOKEN")
 	} else if err := mrkt.CheckAuth(ctx); err != nil {
 		log.Warn("MRKT token dead — update in Mini App", "err", err)
 	} else {
@@ -273,30 +378,29 @@ func checkTokens(
 	}
 
 	if portalsTok.Get() == "" {
-		log.Warn("Portals TMA empty — set in Mini App or PORTALS_TMA")
+		log.Info("portals off — no PORTALS_TOKEN")
 	} else if err := portals.CheckAuth(ctx); err != nil {
-		log.Warn("Portals TMA dead — update in Mini App", "err", err)
+		log.Warn("Portals token dead — update in Mini App", "err", err)
 	} else {
-		log.Info("Portals TMA ok")
+		log.Info("Portals token ok")
 	}
 
-	if getgems == nil {
-		log.Warn("GETGEMS_API_KEY empty — Getgems venue off")
+	if !getgems.HasAPIKey() {
+		log.Info("getgems off — no GETGEMS_TOKEN")
 	} else if err := getgems.CheckAuth(ctx); err != nil {
-		log.Warn("Getgems API key dead", "err", err)
+		log.Warn("Getgems token dead", "err", err)
 	} else {
-		log.Info("Getgems API key ok")
+		log.Info("Getgems token ok")
 	}
 
 	if tonnel == nil {
-		log.Warn("Tonnel venue off (TONNEL_DISABLED)")
+		log.Info("tonnel off")
+	} else if !tonnel.HasInitData() {
+		log.Info("tonnel off — no TONNEL_TOKEN")
 	} else if err := tonnel.CheckAuth(ctx); err != nil {
-		log.Warn("Tonnel pageGifts failed", "err", err)
+		log.Warn("Tonnel token dead", "err", err)
 	} else {
-		log.Info("Tonnel pageGifts ok")
-	}
-	if tonnel != nil && !tonnel.HasInitData() {
-		log.Warn("TONNEL_INITDATA empty — Tonnel asks work, comps/saleHistory will skip")
+		log.Info("Tonnel token ok")
 	}
 }
 

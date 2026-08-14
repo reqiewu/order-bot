@@ -21,7 +21,7 @@ type Reader struct {
 	Client marketport.MarketReader
 }
 
-// Worker периодически снимает полный List по слотам и шлёт в Engine.
+// Worker периодически снимает топ-N дешёвых List по слотам и шлёт в Engine.
 type Worker struct {
 	Log        *applog.Logger
 	Reader     Reader
@@ -37,7 +37,7 @@ type Worker struct {
 func (w *Worker) interval() time.Duration {
 	var base time.Duration
 	if w.IntervalFn != nil {
-		if d := w.IntervalFn(); d >= 10*time.Second {
+		if d := w.IntervalFn(); d >= time.Second {
 			base = d
 		}
 	}
@@ -45,7 +45,7 @@ func (w *Worker) interval() time.Duration {
 		if w.Interval > 0 {
 			base = w.Interval
 		} else {
-			base = 90 * time.Second
+			base = time.Second
 		}
 	}
 	// ±15% чтобы воркеры маркетов не били API синхронно.
@@ -57,8 +57,8 @@ func (w *Worker) Run(ctx context.Context) {
 	if log == nil {
 		log = applog.Nop()
 	}
-	// Стартовый джиттер, чтобы два маркета не стартовали в один тик.
-	_ = jitter.Sleep(ctx, 0, 3*time.Second)
+	// Короткий стартовый джиттер (1с-poll не ждёт 3с).
+	_ = jitter.Sleep(ctx, 0, 300*time.Millisecond)
 	t := time.NewTimer(0)
 	defer t.Stop()
 	for {
@@ -72,14 +72,26 @@ func (w *Worker) Run(ctx context.Context) {
 	}
 }
 
+func readerEnabled(c marketport.MarketReader) bool {
+	type enabler interface{ Enabled() bool }
+	if e, ok := c.(enabler); ok {
+		return e.Enabled()
+	}
+	return true
+}
+
 func (w *Worker) tick(ctx context.Context, log *applog.Logger) {
+	if w.Reader.Client == nil || !readerEnabled(w.Reader.Client) {
+		return
+	}
 	slots := w.Slots()
 	for i, slot := range slots {
 		if !slot.Valid() {
 			continue
 		}
 		if i > 0 {
-			if err := jitter.Sleep(ctx, 150*time.Millisecond, 500*time.Millisecond); err != nil {
+			// При быстром poll почти без паузы между слотами.
+			if err := jitter.Sleep(ctx, 20*time.Millisecond, 80*time.Millisecond); err != nil {
 				return
 			}
 		}
@@ -88,7 +100,7 @@ func (w *Worker) tick(ctx context.Context, log *applog.Logger) {
 			Model:      slot.Model,
 			Backdrop:   slot.Backdrop,
 		}
-		log.InfoTree("list start",
+		log.DebugTree("list start",
 			applog.KV{K: "market", V: w.Reader.Name},
 			applog.KV{K: "collection", V: orAny(slot.Collection)},
 			applog.KV{K: "model", V: orAny(slot.Model)},
@@ -163,7 +175,7 @@ func (w *Worker) logListResult(log *applog.Logger, slot catalog.WatchSlot, lots 
 	if prev == nil {
 		// первый снимок — baseline, без флуда listing added
 		kvs = append(kvs, applog.KV{K: "snapshot", V: "initial"}, elapsedKV)
-		log.InfoTree("list ok", kvs...)
+		log.DebugTree("list ok", kvs...)
 		return
 	}
 
@@ -194,13 +206,8 @@ func (w *Worker) logListResult(log *applog.Logger, slot catalog.WatchSlot, lots 
 		applog.KV{K: "changed", V: fmt.Sprintf("%d", len(changed))},
 		elapsedKV,
 	)
-	log.InfoTree("list ok", kvs...)
-
-	// Поштучно на Info; при большом diff — только summary (детали в debug).
-	const detailLimit = 30
-	detail := len(added)+len(removed)+len(changed) <= detailLimit || log.DebugEnabled()
-	if !detail {
-		log.Info("listing details skipped", "total", len(added)+len(removed)+len(changed), "hint", "LOG_LEVEL=debug")
+	log.DebugTree("list ok", kvs...)
+	if !log.DebugEnabled() {
 		return
 	}
 	for _, lot := range added {
@@ -220,7 +227,7 @@ func logListing(log *applog.Logger, msg string, lot catalog.Lot, priceOverride s
 	if priceOverride != "" {
 		price = priceOverride
 	}
-	log.InfoTree(msg,
+	log.DebugTree(msg,
 		applog.KV{K: "market", V: lot.Market},
 		applog.KV{K: "collection", V: orAny(lot.ModelBG.Collection)},
 		applog.KV{K: "model", V: orAny(lot.ModelBG.Model)},
@@ -255,11 +262,11 @@ func SalesOnDemand(readers map[string]marketport.MarketReader, limit int, maxAge
 		limit = marketport.DefaultSaleLimit
 	}
 	if maxAge <= 0 {
-		maxAge = 72 * time.Hour
+		maxAge = 10 * 24 * time.Hour
 	}
 	return func(sellMarket string, like catalog.Lot) ([]money.NanoTON, error) {
 		r := readers[sellMarket]
-		if r == nil {
+		if r == nil || !readerEnabled(r) {
 			return nil, nil
 		}
 		src := marketport.Listing{

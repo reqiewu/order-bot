@@ -71,3 +71,14 @@ func ProbePortals(ctx context.Context, tma string) error {
 	}
 	return NewPortals(PortalsConfig{Auth: StaticToken(tma)}).CheckAuth(ctx)
 }
+
+// NormalizeGetgemsAPIKey strips quotes / Bearer from pasted Read API key.
+func NormalizeGetgemsAPIKey(tok string) string {
+	tok = strings.TrimSpace(tok)
+	tok = strings.Trim(tok, `"'`)
+	tok = strings.TrimSpace(tok)
+	if len(tok) >= 7 && strings.EqualFold(tok[:7], "bearer ") {
+		tok = strings.TrimSpace(tok[7:])
+	}
+	return tok
+}

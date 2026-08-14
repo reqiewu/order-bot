@@ -5,7 +5,7 @@
 
 Личный paper-снайпер **Telegram Gifts**: считает кросс-маркет спред и пишет в личку «купил бы / продал бы». Сам ничего не покупает.
 
-**Portals** · **MRKT** · **Getgems** · **Tonnel**
+**Portals** · **MRKT** · **Getgems** · **Tonnel** · **Telegram** (Gift Marketplace)
 
 | | |
 | :---: | :---: |
@@ -13,9 +13,10 @@
 | Режим | Paper (Confirm / Auto — позже) |
 | Матч | коллекция + model + backdrop |
 | Триггер | только кросс-маркет; same-market не алертит |
+| Poll | ~1с; asks = топ **100** самых дешёвых по слоту |
 
 ```text
-watch-слоты ──▶ 4 маркета (poll) ──▶ книги asks
+watch-слоты ──▶ 5 маркетов (poll ~1с) ──▶ топ-100 asks
                                       │
                                       ▼
                          cheap buy vs highest other ask
@@ -23,7 +24,6 @@ watch-слоты ──▶ 4 маркета (poll) ──▶ книги asks
                          + медиана sales на выходе
                                       ▼
                               Telegram paper-алерт
-                         [ Купить MRKT ] [ Купить Tonnel ]
 ```
 
 ---
@@ -47,7 +47,7 @@ make logs
 Дальше в личке бота:
 
 1. `/start` → Mini App
-2. Вставить **MRKT** / **Portals** токены
+2. Вставить токены **MRKT / Portals / Getgems / Tonnel** (пустое имя в `.env` = рынок выкл)
 3. Добавить watch-слоты (коллекция обязательна)
 4. Для кнопки Mini App в `/start`: `MINIAPP_PUBLIC_URL=https://…` (туннель)
 
@@ -60,11 +60,24 @@ make logs
 | Маркет | Asks | Comps (sales) | Откуда креды |
 | :---: | :---: | :---: | :---: |
 | **MRKT** | да | да | Mini App / `MRKT_TOKEN` |
-| **Portals** | да | да | Mini App / `PORTALS_TMA` |
-| **Getgems** | да | да | `GETGEMS_API_KEY` ([Read API](https://api.getgems.io/public-api/docs)) |
-| **Tonnel** | да, без логина | `TONNEL_INITDATA` | `.env`; выключить: `TONNEL_DISABLED=1` |
+| **Portals** | да | да | Mini App / `PORTALS_TOKEN` |
+| **Getgems** | да | да | Mini App / `GETGEMS_TOKEN` ([Read API](https://api.getgems.io/public-api/docs)) |
+| **Tonnel** | да | да | Mini App / `TONNEL_TOKEN` |
+| **Telegram** | да (только TON-лоты) | пока нет | MTProto user session |
 
-Tonnel ходит с **Chrome TLS** (не обычный Go `net/http`). Если Cloudflare всё ещё 403 — это IP (VPS/Docker), не ридер.
+### Telegram Gift Marketplace
+
+In-app resale (`payments.getResaleStarGifts`). Paper **buy-кандидат** с дешёвым TON-ask → выход на другие маркеты. Stars-only лоты пропускаются. История продаж — позже.
+
+1. `TELEGRAM_API_ID` + `TELEGRAM_API_HASH` с [my.telegram.org/apps](https://my.telegram.org/apps)
+2. Логин (интерактивно): `go run ./cmd/tg-login` → `data/tg.session`
+3. `make start` монтирует `./data` → `/session` (`TELEGRAM_SESSION_PATH` в compose)
+
+Выключить: `TELEGRAM_USER_DISABLED=1`.
+
+Пустой токен = рынок выключен (нет poll и sales). Старые имена `PORTALS_TMA` / `GETGEMS_API_KEY` / `TONNEL_INITDATA` ещё читаются.
+
+Tonnel и asks, и comps — только с `TONNEL_TOKEN`. Запросы с **Chrome TLS**. Если Cloudflare всё ещё 403 — это IP (VPS/Docker), не ридер.
 
 ---
 
@@ -78,7 +91,7 @@ Tonnel ходит с **Chrome TLS** (не обычный Go `net/http`). Есл�
 | `make stop` | остановить |
 | `make clean` | stop + образ + volume |
 
-Mini App слушает `:8080` (`MINIAPP_PORT`).
+Mini App слушает `MINIAPP_PORT` (по умолчанию 8080).
 
 ---
 

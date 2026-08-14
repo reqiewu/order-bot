@@ -12,23 +12,24 @@ import (
 	"sync"
 	"time"
 
-	"github.com/reqiewu/order-bot/internal/marketport"
 	"github.com/reqiewu/order-bot/internal/giftid"
+	"github.com/reqiewu/order-bot/internal/marketport"
 )
 
 const (
 	defaultPortalsBaseURL = "https://portal-market.com"
-	defaultPortalsPages   = 500 // safety-cap; крутим до короткой страницы
+	defaultPortalsPages   = 20 // ~ListLimit / pageSize
 	portalsPageSize       = 20
 )
 
 // PortalsConfig — HTTP-клиент Portals (portal-market.com).
 type PortalsConfig struct {
-	BaseURL  string
-	Auth     TokenProvider // TMA initData; для RecentSales обязателен
-	HTTP     *http.Client
-	MaxPages int
-	PageSize int
+	BaseURL   string
+	Auth      TokenProvider // TMA initData; для RecentSales обязателен
+	HTTP      *http.Client
+	MaxPages  int
+	PageSize  int
+	ListLimit int
 }
 
 // Portals — адаптер MarketReader для Portals.
@@ -38,6 +39,7 @@ type Portals struct {
 	http      *http.Client
 	maxPages  int
 	pageSize  int
+	listLimit int
 	gate      portalsGate
 	listMu    sync.Mutex
 	listCache map[string]portalsListCacheEntry
@@ -53,7 +55,7 @@ type portalsListCacheEntry struct {
 }
 
 const (
-	portalsListCacheTTL = 20 * time.Second
+	portalsListCacheTTL = time.Second
 	portalsColCacheTTL  = 30 * time.Minute
 )
 
@@ -94,14 +96,21 @@ func NewPortals(cfg PortalsConfig) *Portals {
 	if pageSize <= 0 {
 		pageSize = portalsPageSize
 	}
+	listLimit := cfg.ListLimit
+	if listLimit <= 0 {
+		listLimit = marketport.DefaultListLimit
+	}
 	return &Portals{
-		baseURL:  base,
-		auth:     cfg.Auth,
-		http:     httpClient,
-		maxPages: maxPages,
-		pageSize: pageSize,
+		baseURL:   base,
+		auth:      cfg.Auth,
+		http:      httpClient,
+		maxPages:  maxPages,
+		pageSize:  pageSize,
+		listLimit: listLimit,
 	}
 }
+
+func (p *Portals) Enabled() bool { return p != nil && tokenPresent(p.auth) }
 
 var _ marketport.MarketReader = (*Portals)(nil)
 
@@ -176,7 +185,7 @@ func (p *Portals) listUncached(ctx context.Context, watch marketport.WatchItem) 
 		return nil, err
 	}
 	var out []marketport.Listing
-	for page := 0; page < p.maxPages; page++ {
+	for page := 0; page < p.maxPages && len(out) < p.listLimit; page++ {
 		offset := page * p.pageSize
 		q := url.Values{}
 		q.Set("offset", strconv.Itoa(offset))
@@ -214,12 +223,15 @@ func (p *Portals) listUncached(ctx context.Context, watch marketport.WatchItem) 
 				continue
 			}
 			out = append(out, listing)
+			if len(out) >= p.listLimit {
+				break
+			}
 		}
 		if len(parsed.Results) < p.pageSize {
 			break
 		}
 	}
-	return out, nil
+	return marketport.TakeCheapest(out, p.listLimit), nil
 }
 
 func (p *Portals) resolveCollectionID(ctx context.Context, collection string) (string, error) {

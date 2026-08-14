@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/reqiewu/order-bot/internal/giftid"
@@ -17,7 +18,7 @@ import (
 
 const (
 	defaultTonnelBaseURL = "https://gifts3.tonnel.network"
-	tonnelMaxPages       = 100
+	tonnelMaxPages       = 5 // ~100–150 лотов при page 30
 	tonnelListPageSize   = 30
 	tonnelSalesPageSize  = 50
 	tonnelGiftURLPrefix  = "https://marketplace.tonnel.network/nft/"
@@ -25,21 +26,25 @@ const (
 
 // TonnelConfig — gifts.tonnel.network (pageGifts + saleHistory).
 type TonnelConfig struct {
-	BaseURL  string
-	InitData string       // Telegram WebApp initData; List ок без него, RecentSales — нет
-	HTTP     *http.Client // если задан (тесты) — обычный net/http; иначе Chrome TLS
-	MaxPages int
-	PageSize int
+	BaseURL   string
+	InitData  string       // Telegram WebApp initData; List ок без него, RecentSales — нет
+	HTTP      *http.Client // если задан (тесты) — обычный net/http; иначе Chrome TLS
+	MaxPages  int
+	PageSize  int
+	ListLimit int
 }
 
 // Tonnel — ридер витрины Tonnel (asks через pageGifts, comps через saleHistory).
 type Tonnel struct {
-	baseURL  string
+	baseURL   string
+	doer      tonnelDoer
+	maxPages  int
+	pageSize  int
+	listLimit int
+	gate      tonnelGate
+
+	authMu   sync.RWMutex
 	initData string
-	doer     tonnelDoer
-	maxPages int
-	pageSize int
-	gate     tonnelGate
 }
 
 func NewTonnel(cfg TonnelConfig) *Tonnel {
@@ -55,16 +60,41 @@ func NewTonnel(cfg TonnelConfig) *Tonnel {
 	if pageSize <= 0 {
 		pageSize = tonnelListPageSize
 	}
+	listLimit := cfg.ListLimit
+	if listLimit <= 0 {
+		listLimit = marketport.DefaultListLimit
+	}
 	return &Tonnel{
-		baseURL:  base,
-		initData: strings.TrimSpace(cfg.InitData),
-		doer:     newTonnelDoer(cfg.HTTP),
-		maxPages: maxPages,
-		pageSize: pageSize,
+		baseURL:   base,
+		initData:  strings.TrimSpace(cfg.InitData),
+		doer:      newTonnelDoer(cfg.HTTP),
+		maxPages:  maxPages,
+		pageSize:  pageSize,
+		listLimit: listLimit,
 	}
 }
 
 var _ marketport.MarketReader = (*Tonnel)(nil)
+
+// SetInitData обновляет Telegram initData без рестарта (Mini App / comps).
+func (t *Tonnel) SetInitData(initData string) {
+	if t == nil {
+		return
+	}
+	t.authMu.Lock()
+	t.initData = strings.TrimSpace(initData)
+	t.authMu.Unlock()
+}
+
+// InitData — текущий authData (для Live-статуса Mini App).
+func (t *Tonnel) InitData() string {
+	if t == nil {
+		return ""
+	}
+	t.authMu.RLock()
+	defer t.authMu.RUnlock()
+	return t.initData
+}
 
 type tonnelGift struct {
 	GiftID           json.RawMessage `json:"gift_id"`
@@ -99,8 +129,10 @@ type tonnelErrEnvelope struct {
 }
 
 func (t *Tonnel) HasInitData() bool {
-	return t != nil && strings.TrimSpace(t.initData) != ""
+	return strings.TrimSpace(t.InitData()) != ""
 }
+
+func (t *Tonnel) Enabled() bool { return t != nil && t.HasInitData() }
 
 func (t *Tonnel) CheckAuth(ctx context.Context) error {
 	_, err := t.pageGifts(ctx, 1, 1, map[string]any{
@@ -119,7 +151,7 @@ func (t *Tonnel) List(ctx context.Context, watch marketport.WatchItem) ([]market
 	wantModel := giftid.Fold(stripTonnelRarity(watch.Model))
 	wantBG := giftid.Fold(stripTonnelRarity(watch.Backdrop))
 	var out []marketport.Listing
-	for page := 1; page <= t.maxPages; page++ {
+	for page := 1; page <= t.maxPages && len(out) < t.listLimit; page++ {
 		items, err := t.pageGifts(ctx, page, t.pageSize, filter)
 		if err != nil {
 			return nil, err
@@ -139,16 +171,19 @@ func (t *Tonnel) List(ctx context.Context, watch marketport.WatchItem) ([]market
 				continue
 			}
 			out = append(out, lot)
+			if len(out) >= t.listLimit {
+				break
+			}
 		}
 		if len(items) < t.pageSize {
 			break
 		}
 	}
-	return out, nil
+	return marketport.TakeCheapest(out, t.listLimit), nil
 }
 
 func (t *Tonnel) RecentSales(ctx context.Context, like marketport.Listing, limit int) ([]marketport.Sale, error) {
-	if strings.TrimSpace(t.initData) == "" {
+	if !t.HasInitData() {
 		return nil, ErrEmptyToken
 	}
 	if limit <= 0 {
@@ -209,7 +244,7 @@ func (t *Tonnel) pageGifts(ctx context.Context, page, limit int, filter map[stri
 		"filter":      string(filterRaw),
 		"ref":         0,
 		"price_range": nil,
-		"user_auth":   t.initData,
+		"user_auth":   t.InitData(),
 	})
 	if err != nil {
 		return nil, err
@@ -223,7 +258,7 @@ func (t *Tonnel) pageGifts(ctx context.Context, page, limit int, filter map[stri
 
 func (t *Tonnel) saleHistory(ctx context.Context, page, limit int, filter map[string]any) ([]tonnelSaleEl, error) {
 	body, err := t.post(ctx, "/api/saleHistory", map[string]any{
-		"authData": t.initData,
+		"authData": t.InitData(),
 		"page":     page,
 		"limit":    limit,
 		"type":     "SALE",
@@ -482,7 +517,18 @@ func unixFlexible(n int64) time.Time {
 	return time.Unix(n, 0).UTC()
 }
 
-// ProbeTonnel — pageGifts отвечает (initData не обязателен).
+// ProbeTonnel — pageGifts отвечает (initData не обязателен для витрины).
 func ProbeTonnel(ctx context.Context, initData string) error {
 	return NewTonnel(TonnelConfig{InitData: strings.TrimSpace(initData)}).CheckAuth(ctx)
+}
+
+// ProbeTonnelInitData — saleHistory принимает authData (для comps / Mini App save).
+func ProbeTonnelInitData(ctx context.Context, initData string) error {
+	initData = NormalizePortalsTMA(initData)
+	if initData == "" {
+		return ErrEmptyToken
+	}
+	t := NewTonnel(TonnelConfig{InitData: initData})
+	_, err := t.RecentSales(ctx, marketport.Listing{Collection: "Fine Pen"}, 1)
+	return err
 }
