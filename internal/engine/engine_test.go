@@ -142,7 +142,7 @@ func TestQuotePicksHighestAskIncludingTonnel(t *testing.T) {
 	}
 }
 
-func TestTonnelIsBuyVenue(t *testing.T) {
+func TestTelegramIsBuyVenue(t *testing.T) {
 	cap := &captureAlert{}
 	eng := engine.New(applog.Nop(), spread.DefaultFees(), salesStub, cap, engine.NewMemoryDeduper())
 	eng.Handle(engine.MarketEvent{
@@ -150,13 +150,13 @@ func TestTonnelIsBuyVenue(t *testing.T) {
 		Listings: []catalog.Lot{lot("m1", marketport.MarketMRKT, 20)},
 	})
 	eng.Handle(engine.MarketEvent{
-		Market: marketport.MarketTonnel, WatchID: "w",
-		Listings: []catalog.Lot{lot("t1", marketport.MarketTonnel, 8)},
+		Market: marketport.MarketTelegram, WatchID: "w",
+		Listings: []catalog.Lot{lot("tg1", marketport.MarketTelegram, 8)},
 	})
 	if cap.n != 1 {
 		t.Fatalf("alerts=%d", cap.n)
 	}
-	if cap.last.BuyMarket != marketport.MarketTonnel || cap.last.SellMarket != marketport.MarketMRKT {
+	if cap.last.BuyMarket != marketport.MarketTelegram || cap.last.SellMarket != marketport.MarketMRKT {
 		t.Fatalf("buy=%s sell=%s", cap.last.BuyMarket, cap.last.SellMarket)
 	}
 }

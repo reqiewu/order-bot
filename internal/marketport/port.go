@@ -7,14 +7,43 @@ import (
 )
 
 const (
-	MarketMRKT    = "mrkt"
-	MarketPortals = "portals"
-	MarketGetgems = "getgems"
-	MarketTonnel  = "tonnel"
+	MarketMRKT     = "mrkt"
+	MarketPortals  = "portals"
+	MarketGetgems  = "getgems"
+	MarketTonnel   = "tonnel"
+	MarketTelegram = "telegram" // in-app Gift Marketplace (MTProto)
 
 	// DefaultSaleLimit — сколько sales тянуть с API за раз (нужно ≥5 после чистки).
 	DefaultSaleLimit = 50
+
+	// DefaultListLimit — сколько самых дешёвых asks брать за List (не полный стакан).
+	DefaultListLimit = 100
 )
+
+// TakeCheapest возвращает до limit лотов с минимальной Price (стабильный порядок).
+func TakeCheapest(in []Listing, limit int) []Listing {
+	if limit <= 0 || len(in) <= limit {
+		if limit <= 0 {
+			return in
+		}
+		out := make([]Listing, len(in))
+		copy(out, in)
+		return out
+	}
+	out := make([]Listing, len(in))
+	copy(out, in)
+	// insertion-select: для N≤пары сотен достаточно
+	for i := 0; i < limit; i++ {
+		best := i
+		for j := i + 1; j < len(out); j++ {
+			if out[j].Price < out[best].Price {
+				best = j
+			}
+		}
+		out[i], out[best] = out[best], out[i]
+	}
+	return out[:limit]
+}
 
 // WatchItem — слот мониторинга (коллекция обязательна; model/backdrop опциональны).
 type WatchItem struct {
@@ -33,7 +62,7 @@ type Listing struct {
 	Backdrop   string
 	Symbol     string
 	URL        string
-	Market     string // mrkt | portals | getgems | tonnel — заполняет ingress
+	Market     string // mrkt | portals | getgems | tonnel | telegram — заполняет ingress
 }
 
 // Sale — недавняя продажа.

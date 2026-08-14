@@ -104,7 +104,7 @@ func (d *MemoryDeduper) ForgetMissing(market string, liveIDs map[string]struct{}
 	}
 }
 
-// Engine держит книги и считает кросс Portals ↔ MRKT ↔ Getgems ↔ Tonnel.
+// Engine держит книги и считает кросс Portals ↔ MRKT ↔ Getgems ↔ Tonnel ↔ Telegram.
 type Engine struct {
 	log   *applog.Logger
 	fees  spread.Fees
@@ -189,7 +189,7 @@ func (e *Engine) Handle(ev MarketEvent) {
 
 func isBuyVenue(m string) bool {
 	switch m {
-	case marketport.MarketMRKT, marketport.MarketPortals, marketport.MarketGetgems, marketport.MarketTonnel:
+	case marketport.MarketMRKT, marketport.MarketPortals, marketport.MarketGetgems, marketport.MarketTonnel, marketport.MarketTelegram:
 		return true
 	default:
 		return false
@@ -197,7 +197,7 @@ func isBuyVenue(m string) bool {
 }
 
 func quoteVenues(buy string) []string {
-	all := []string{marketport.MarketMRKT, marketport.MarketPortals, marketport.MarketGetgems, marketport.MarketTonnel}
+	all := []string{marketport.MarketMRKT, marketport.MarketPortals, marketport.MarketGetgems, marketport.MarketTonnel, marketport.MarketTelegram}
 	out := make([]string, 0, len(all)-1)
 	for _, m := range all {
 		if m != buy {
