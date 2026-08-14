@@ -9,11 +9,13 @@ services:
     environment:
       BOLT_PATH: /data/order-bot.db
       MINIAPP_STATIC_DIR: /app/web/dist
-      MINIAPP_ADDR: ":8080"
+      # tg-login пишет ./data/tg.session на хосте; в контейнере это не ./data
+      TELEGRAM_SESSION_PATH: /session/tg.session
     ports:
-      - "${MINIAPP_PORT:-8080}:8080"
+      - "${MINIAPP_PORT:-8080}:${MINIAPP_PORT:-8080}"
     volumes:
       - orderdata:/data
+      - ./data:/session:ro
     logging:
       driver: json-file
       options:

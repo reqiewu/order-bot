@@ -25,7 +25,7 @@ USER orderbot
 WORKDIR /app
 ENV BOLT_PATH=/data/order-bot.db
 ENV MINIAPP_STATIC_DIR=/app/web/dist
-ENV MINIAPP_ADDR=:8080
+ENV MINIAPP_PORT=8080
 VOLUME ["/data"]
 EXPOSE 8080
 ENTRYPOINT ["/app/order-bot"]

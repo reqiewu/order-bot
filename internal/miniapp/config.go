@@ -17,10 +17,7 @@ type Config struct {
 }
 
 func ConfigFromEnv(botToken string, operatorID int64) (Config, error) {
-	addr := strings.TrimSpace(os.Getenv("MINIAPP_ADDR"))
-	if addr == "" {
-		addr = ":8080"
-	}
+	addr := listenAddrFromEnv()
 	if strings.EqualFold(os.Getenv("MINIAPP_DISABLED"), "1") ||
 		strings.EqualFold(os.Getenv("MINIAPP_DISABLED"), "true") {
 		addr = ""
@@ -49,3 +46,18 @@ func ConfigFromEnv(botToken string, operatorID int64) (Config, error) {
 }
 
 func (c Config) Enabled() bool { return c.Addr != "" }
+
+// listenAddrFromEnv — MINIAPP_PORT (8080 или :8080). Alias: MINIAPP_ADDR.
+func listenAddrFromEnv() string {
+	raw := strings.TrimSpace(os.Getenv("MINIAPP_PORT"))
+	if raw == "" {
+		raw = strings.TrimSpace(os.Getenv("MINIAPP_ADDR"))
+	}
+	if raw == "" {
+		return ":8080"
+	}
+	if strings.Contains(raw, ":") {
+		return raw
+	}
+	return ":" + raw
+}
