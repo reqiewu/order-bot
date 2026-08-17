@@ -1,14 +1,37 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type UIEvent } from 'react';
 import {
   backdropGradient,
   formatRarity,
   formatTON,
   giftPreviewURL,
+  modelPreviewURL,
   type AttrRow,
   type GiftRow,
 } from './api';
+import { cachedBackdrop, loadBackdrops } from './backdropCache';
 
 export type GiftSort = 'default' | 'floor' | 'volume';
+
+const PAGE = 24;
+
+function useVisiblePage<T>(items: T[], open: boolean) {
+  const [shown, setShown] = useState(PAGE);
+  useEffect(() => {
+    setShown(PAGE);
+  }, [items, open]);
+  function onScroll(e: UIEvent<HTMLDivElement>) {
+    const el = e.currentTarget;
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < 180) {
+      setShown((n) => Math.min(items.length, n + PAGE));
+    }
+  }
+  return {
+    visible: items.slice(0, shown),
+    shown,
+    onScroll,
+    hasMore: shown < items.length,
+  };
+}
 
 type GiftPickerProps = {
   open: boolean;
@@ -41,6 +64,8 @@ export function GiftPicker({ open, title, items, selected, onClose, onSelect, on
     }
     return copy;
   }, [items, q, sort]);
+
+  const page = useVisiblePage(filtered, open);
 
   if (!open) return null;
   return (
@@ -87,8 +112,8 @@ export function GiftPicker({ open, title, items, selected, onClose, onSelect, on
           Как в каталоге
         </button>
       </div>
-      <div className="sheet__list">
-        {filtered.map((it) => {
+      <div className="sheet__list" onScroll={page.onScroll}>
+        {page.visible.map((it) => {
           const active = it.name === selected;
           return (
             <button
@@ -119,6 +144,7 @@ export function GiftPicker({ open, title, items, selected, onClose, onSelect, on
             </button>
           );
         })}
+        {page.hasMore ? <div className="sheet__more">Ещё…</div> : null}
       </div>
     </div>
   );
@@ -134,6 +160,8 @@ type AttrPickerProps = {
   onClear?: () => void;
   showPreview?: boolean;
   showColors?: boolean;
+  gift?: string;
+  busy?: boolean;
 };
 
 export function AttrPicker({
@@ -146,13 +174,33 @@ export function AttrPicker({
   onClear,
   showPreview,
   showColors,
+  gift,
+  busy,
 }: AttrPickerProps) {
   const [q, setQ] = useState('');
+  const [, setPaint] = useState(0);
   const filtered = useMemo(() => {
     const s = q.trim().toLowerCase();
     if (!s) return items;
     return items.filter((it) => it.name.toLowerCase().includes(s));
   }, [items, q]);
+  const page = useVisiblePage(filtered, open);
+
+  useEffect(() => {
+    if (!open || !showColors || !gift) return;
+    const missing = filtered
+      .slice(0, page.shown)
+      .filter((it) => !it.center_color && !cachedBackdrop(gift, it.name))
+      .map((it) => it.name);
+    if (missing.length === 0) return;
+    let cancelled = false;
+    void loadBackdrops(gift, missing, () => {
+      if (!cancelled) setPaint((n) => n + 1);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, showColors, gift, page.shown, filtered]);
 
   if (!open) return null;
   return (
@@ -176,7 +224,7 @@ export function AttrPicker({
       <div className="sheet__search">
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Поиск" />
       </div>
-      <div className="sheet__list">
+      <div className="sheet__list" onScroll={page.onScroll}>
         <button
           type="button"
           className={`sheet__row${!selected ? ' is-active' : ''}`}
@@ -191,9 +239,15 @@ export function AttrPicker({
           </div>
           {!selected ? <span className="sheet__check">✓</span> : null}
         </button>
-        {filtered.map((it) => {
+        {busy && items.length === 0 ? (
+          <div className="sheet__more">Загрузка…</div>
+        ) : null}
+        {page.visible.map((it) => {
           const active = it.name === selected;
-          const bg = showColors ? backdropGradient(it.center_color, it.edge_color) : undefined;
+          const info = showColors && gift ? cachedBackdrop(gift, it.name) : undefined;
+          const bg = showColors
+            ? backdropGradient(info?.center_color || it.center_color, info?.edge_color || it.edge_color)
+            : undefined;
           return (
             <button
               type="button"
@@ -204,13 +258,15 @@ export function AttrPicker({
                 onClose();
               }}
             >
-              {showPreview ? (
-                <img className="sheet__thumb" src={it.preview_url} alt="" loading="lazy" />
-              ) : showColors ? (
-                <div
+              {showPreview && (gift || it.preview_url) ? (
+                <img
                   className="sheet__thumb"
-                  style={bg ? { background: bg } : undefined}
+                  src={it.preview_url || (gift ? modelPreviewURL(gift, it.name, 128) : '')}
+                  alt=""
+                  loading="lazy"
                 />
+              ) : showColors ? (
+                <div className="sheet__thumb" style={bg ? { background: bg } : undefined} />
               ) : (
                 <div className="sheet__thumb sheet__thumb--empty" />
               )}
@@ -224,6 +280,7 @@ export function AttrPicker({
             </button>
           );
         })}
+        {page.hasMore ? <div className="sheet__more">Ещё…</div> : null}
       </div>
     </div>
   );

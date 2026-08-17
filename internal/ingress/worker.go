@@ -175,7 +175,7 @@ func (w *Worker) logListResult(log *applog.Logger, slot catalog.WatchSlot, lots 
 	if prev == nil {
 		// первый снимок — baseline, без флуда listing added
 		kvs = append(kvs, applog.KV{K: "snapshot", V: "initial"}, elapsedKV)
-		log.DebugTree("list ok", kvs...)
+		log.InfoTree("list ok", kvs...)
 		return
 	}
 
@@ -206,7 +206,7 @@ func (w *Worker) logListResult(log *applog.Logger, slot catalog.WatchSlot, lots 
 		applog.KV{K: "changed", V: fmt.Sprintf("%d", len(changed))},
 		elapsedKV,
 	)
-	log.DebugTree("list ok", kvs...)
+	log.InfoTree("list ok", kvs...)
 	if !log.DebugEnabled() {
 		return
 	}

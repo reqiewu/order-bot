@@ -43,13 +43,16 @@ make logs
 | `TELEGRAM_BOT_TOKEN` | бот |
 | `OPERATOR_TELEGRAM_ID` | твой numeric id |
 | `TOKEN_ENCRYPTION_KEY` | AES для токенов в Bbolt |
+| `TELEGRAM_API_ID` / `TELEGRAM_API_HASH` | user-сессия для маркетов |
 
-Дальше в личке бота:
+Дальше:
 
-1. `/start` → Mini App
-2. Вставить токены **MRKT / Portals / Getgems / Tonnel** (пустое имя в `.env` = рынок выкл)
+1. `go run ./cmd/tg-login` → `data/tg.session`
+2. `/start` → Mini App
 3. Добавить watch-слоты (коллекция обязательна)
 4. Для кнопки Mini App в `/start`: `MINIAPP_PUBLIC_URL=https://…` (туннель)
+
+Токены **Getgems / MRKT / Portals / Tonnel** берутся из Telegram-сессии автоматически. Если сессия умерла — `go run ./cmd/tg-login` снова.
 
 Стоп: `make stop`. Снести контейнер + volume: `make clean` (`.env` не трогает).
 
@@ -59,25 +62,23 @@ make logs
 
 | Маркет | Asks | Comps (sales) | Откуда креды |
 | :---: | :---: | :---: | :---: |
-| **MRKT** | да | да | Mini App / `MRKT_TOKEN` |
-| **Portals** | да | да | Mini App / `PORTALS_TOKEN` |
-| **Getgems** | да | да | Mini App / `GETGEMS_TOKEN` ([Read API](https://api.getgems.io/public-api/docs)) |
-| **Tonnel** | да | да | Mini App / `TONNEL_TOKEN` |
-| **Telegram** | да (только TON-лоты) | пока нет | MTProto user session |
+| **Getgems** | да | да | MTProto → `@GetgemsNftBot` |
+| **MRKT** | да | да | MTProto → `@mrkt/app` |
+| **Portals** | да | да | MTProto → `@portals_market_bot/market` |
+| **Tonnel** | да | да | MTProto → `@tonnel_network_bot/gift` |
+| **Telegram** | да (только TON-лоты) | пока нет | та же user-сессия |
 
-### Telegram Gift Marketplace
+### Telegram user-сессия
 
-In-app resale (`payments.getResaleStarGifts`). Paper **buy-кандидат** с дешёвым TON-ask → выход на другие маркеты. Stars-only лоты пропускаются. История продаж — позже.
+Одна MTProto-сессия даёт Gift Marketplace asks и токены внешних маркетов.
 
 1. `TELEGRAM_API_ID` + `TELEGRAM_API_HASH` с [my.telegram.org/apps](https://my.telegram.org/apps)
-2. Логин (интерактивно): `go run ./cmd/tg-login` → `data/tg.session`
-3. `make start` монтирует `./data` → `/session` (`TELEGRAM_SESSION_PATH` в compose)
+2. Логин: `go run ./cmd/tg-login` → `data/tg.session`
+3. `make start` монтирует `./data` → `/session`
 
-Выключить: `TELEGRAM_USER_DISABLED=1`.
+Если сессия умерла — снова `tg-login`. Env-токены маркетов больше не читаются.
 
-Пустой токен = рынок выключен (нет poll и sales). Старые имена `PORTALS_TMA` / `GETGEMS_API_KEY` / `TONNEL_INITDATA` ещё читаются.
-
-Tonnel и asks, и comps — только с `TONNEL_TOKEN`. Запросы с **Chrome TLS**. Если Cloudflare всё ещё 403 — это IP (VPS/Docker), не ридер.
+Tonnel ходит с **Chrome TLS**. Если Cloudflare 403 — это IP (VPS/Docker), не ридер.
 
 ---
 

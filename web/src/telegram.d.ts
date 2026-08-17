@@ -8,6 +8,9 @@ declare global {
         initDataUnsafe: { user?: { id: number } };
         themeParams: Record<string, string>;
         colorScheme: 'light' | 'dark';
+        viewportStableHeight?: number;
+        onEvent?: (event: string, cb: () => void) => void;
+        offEvent?: (event: string, cb: () => void) => void;
       };
     };
   }

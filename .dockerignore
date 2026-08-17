@@ -1,0 +1,13 @@
+.git
+.agents
+.cursor
+.docs
+docs
+*.md
+.env
+vpn.json
+data
+bin
+web/node_modules
+web/dist
+**/*_test.go

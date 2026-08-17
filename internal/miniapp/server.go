@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/reqiewu/order-bot/internal/applog"
+	"github.com/reqiewu/order-bot/internal/assetstore"
 	"github.com/reqiewu/order-bot/internal/catalog"
 	"github.com/reqiewu/order-bot/internal/giftchanges"
 	"github.com/reqiewu/order-bot/internal/market"
@@ -36,15 +37,17 @@ type Deps struct {
 	Log         *applog.Logger
 	Hooks       TokenHooks
 	GiftChanges *giftchanges.GiftChanges
+	Assets      *assetstore.Store
 	MRKT        *market.MRKT
 	Portals     *market.Portals
 	Getgems     *market.Getgems
 	Tonnel      *market.Tonnel
-	// Live token getters — то, чем процесс реально ходит в API (env и/или bolt).
+	// Live token getters — то, чем процесс реально ходит в API (сессия Telegram).
 	LiveMRKT    func() string
 	LivePortals func() string
 	LiveGetgems func() string
 	LiveTonnel  func() string
+	TGSessionOK func() bool
 }
 
 // Server — API + SPA.
@@ -80,6 +83,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/slots", s.withUser(s.postSlot))
 	s.mux.HandleFunc("DELETE /api/slots", s.withUser(s.deleteSlot))
 	s.registerCatalogRoutes()
+	s.registerAssetRoutes()
 
 	if dir := strings.TrimSpace(s.deps.Config.StaticDir); dir != "" {
 		s.mux.Handle("/", spaFileServer(dir))
@@ -158,25 +162,24 @@ func (s *Server) getTokens(w http.ResponseWriter, r *http.Request, _ int64) {
 func (s *Server) tokenPresence() map[string]any {
 	liveMRKT := strings.TrimSpace(s.liveMRKT())
 	livePortals := strings.TrimSpace(s.livePortals())
-	liveGetgems := strings.TrimSpace(s.liveGetgems())
 	liveTonnel := strings.TrimSpace(s.liveTonnel())
 	storedMRKT := s.deps.Store.HasMRKTToken()
 	storedPortals := s.deps.Store.HasPortalsTMA()
-	storedGetgems := s.deps.Store.HasGetgemsAPIKey()
 	storedTonnel := s.deps.Store.HasTonnelInitData()
 	return map[string]any{
 		"mrkt_set":       liveMRKT != "" || storedMRKT,
 		"portals_set":    livePortals != "" || storedPortals,
-		"getgems_set":    liveGetgems != "" || storedGetgems,
+		"getgems_set":    s.deps.Getgems != nil,
 		"tonnel_set":     liveTonnel != "" || storedTonnel,
 		"mrkt_live":      liveMRKT != "",
 		"portals_live":   livePortals != "",
-		"getgems_live":   liveGetgems != "",
+		"getgems_live":   s.deps.Getgems != nil && s.deps.Getgems.Enabled(),
 		"tonnel_live":    liveTonnel != "",
 		"mrkt_stored":    storedMRKT,
 		"portals_stored": storedPortals,
-		"getgems_stored": storedGetgems,
+		"getgems_stored": s.deps.Getgems != nil,
 		"tonnel_stored":  storedTonnel,
+		"tg_session":     s.tgSessionOK(),
 	}
 }
 
@@ -212,6 +215,13 @@ func (s *Server) liveTonnel() string {
 		return s.deps.Tonnel.InitData()
 	}
 	return ""
+}
+
+func (s *Server) tgSessionOK() bool {
+	if s.deps.TGSessionOK != nil {
+		return s.deps.TGSessionOK()
+	}
+	return false
 }
 
 type tokenProbeStatus struct {
@@ -251,9 +261,7 @@ func (s *Server) probeLiveTokens(ctx context.Context) tokenProbeStatus {
 		st.PortalsOk = true
 	}
 
-	if s.liveGetgems() == "" {
-		st.GetgemsErr = "empty"
-	} else if s.deps.Getgems == nil {
+	if s.deps.Getgems == nil {
 		st.GetgemsErr = "getgems client unavailable"
 	} else if err := s.deps.Getgems.CheckAuth(ctx); err != nil {
 		st.GetgemsErr = err.Error()

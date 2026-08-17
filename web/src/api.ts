@@ -45,6 +45,7 @@ export type TokenStatus = {
   portals_error?: string;
   getgems_error?: string;
   tonnel_error?: string;
+  tg_session?: boolean;
 };
 
 export type Runtime = {
@@ -206,15 +207,28 @@ export function getBackdropInfo(gift: string, backdrop: string) {
   );
 }
 
+export function listAllBackdrops() {
+  return api<{ items: BackdropInfo[]; credit?: string }>('/api/catalog/backdrops');
+}
+
+function assetSlug(s: string): string {
+  return (s || '').replace(/[^a-zA-Z0-9._'-]/g, '');
+}
+
 export function giftPreviewURL(gift: string, size = 128): string {
-  const g = (gift || '').replace(/\s/g, '');
-  return `https://api.changes.tg/original/${g}.png?size=${size}`;
+  return `/api/assets/original/${encodeURIComponent(assetSlug(gift))}.png?size=${size}`;
 }
 
 export function modelPreviewURL(gift: string, model: string, size = 256): string {
-  const g = (gift || '').replace(/\s/g, '');
-  const m = encodeURIComponent(model || '');
-  return `https://api.changes.tg/model/${g}/${m}.png?size=${size}`;
+  return `/api/assets/model/${encodeURIComponent(assetSlug(gift))}/${encodeURIComponent(assetSlug(model))}.png?size=${size}`;
+}
+
+export function giftTgsURL(gift: string): string {
+  return `/api/assets/original/${encodeURIComponent(assetSlug(gift))}.tgs`;
+}
+
+export function modelTgsURL(gift: string, model: string): string {
+  return `/api/assets/model/${encodeURIComponent(assetSlug(gift))}/${encodeURIComponent(assetSlug(model))}.tgs`;
 }
 
 export function formatTON(n: number): string {

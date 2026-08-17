@@ -4,52 +4,31 @@ import (
 	"testing"
 )
 
-func TestFromEnvPrefersNewTokenNames(t *testing.T) {
-	t.Setenv("PORTALS_TOKEN", "new-portals")
-	t.Setenv("PORTALS_TMA", "old-portals")
-	t.Setenv("GETGEMS_TOKEN", "new-getgems")
-	t.Setenv("GETGEMS_API_KEY", "old-getgems")
-	t.Setenv("TONNEL_TOKEN", "new-tonnel")
-	t.Setenv("TONNEL_INITDATA", "old-tonnel")
-	t.Setenv("MRKT_TOKEN", "mrkt")
+func TestFromEnvSessionAndBot(t *testing.T) {
+	t.Setenv("TELEGRAM_BOT_TOKEN", "bot-token")
+	t.Setenv("OPERATOR_TELEGRAM_ID", "42")
+	t.Setenv("TELEGRAM_API_ID", "123")
+	t.Setenv("TELEGRAM_API_HASH", "hash")
+	t.Setenv("TELEGRAM_SESSION_PATH", "data/tg.session")
+	t.Setenv("MRKT_TOKEN", "ignored")
+	t.Setenv("PORTALS_TOKEN", "ignored")
+	t.Setenv("GETGEMS_TOKEN", "ignored")
+	t.Setenv("TONNEL_TOKEN", "ignored")
 
 	cfg, err := FromEnv()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.PortalsTMA != "new-portals" {
-		t.Fatalf("PortalsTMA=%q", cfg.PortalsTMA)
+	if cfg.TelegramToken != "bot-token" {
+		t.Fatalf("TelegramToken=%q", cfg.TelegramToken)
 	}
-	if cfg.GetgemsAPIKey != "new-getgems" {
-		t.Fatalf("GetgemsAPIKey=%q", cfg.GetgemsAPIKey)
+	if cfg.OperatorID != 42 {
+		t.Fatalf("OperatorID=%d", cfg.OperatorID)
 	}
-	if cfg.TonnelInitData != "new-tonnel" {
-		t.Fatalf("TonnelInitData=%q", cfg.TonnelInitData)
+	if cfg.TelegramAPIID != 123 {
+		t.Fatalf("TelegramAPIID=%d", cfg.TelegramAPIID)
 	}
-	if cfg.MRKTToken != "mrkt" {
-		t.Fatalf("MRKTToken=%q", cfg.MRKTToken)
-	}
-}
-
-func TestFromEnvFallsBackToLegacyTokenNames(t *testing.T) {
-	t.Setenv("PORTALS_TOKEN", "")
-	t.Setenv("PORTALS_TMA", "old-portals")
-	t.Setenv("GETGEMS_TOKEN", "")
-	t.Setenv("GETGEMS_API_KEY", "old-getgems")
-	t.Setenv("TONNEL_TOKEN", "")
-	t.Setenv("TONNEL_INITDATA", "old-tonnel")
-
-	cfg, err := FromEnv()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.PortalsTMA != "old-portals" {
-		t.Fatalf("PortalsTMA=%q", cfg.PortalsTMA)
-	}
-	if cfg.GetgemsAPIKey != "old-getgems" {
-		t.Fatalf("GetgemsAPIKey=%q", cfg.GetgemsAPIKey)
-	}
-	if cfg.TonnelInitData != "old-tonnel" {
-		t.Fatalf("TonnelInitData=%q", cfg.TonnelInitData)
+	if cfg.TelegramAPIHash != "hash" {
+		t.Fatalf("TelegramAPIHash=%q", cfg.TelegramAPIHash)
 	}
 }

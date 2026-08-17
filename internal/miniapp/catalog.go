@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"sync"
 
 	"github.com/reqiewu/order-bot/internal/giftchanges"
 	"github.com/reqiewu/order-bot/internal/giftid"
@@ -19,6 +18,7 @@ func (s *Server) registerCatalogRoutes() {
 	s.mux.HandleFunc("GET /api/catalog/gifts/{gift}/models", s.withUser(s.handleCatalogModels))
 	s.mux.HandleFunc("GET /api/catalog/gifts/{gift}/backdrops", s.withUser(s.handleCatalogBackdrops))
 	s.mux.HandleFunc("GET /api/catalog/gifts/{gift}/backdrops/{backdrop}", s.withUser(s.handleCatalogBackdropInfo))
+	s.mux.HandleFunc("GET /api/catalog/backdrops", s.withUser(s.handleAllBackdrops))
 }
 
 func (s *Server) handleCatalogGifts(w http.ResponseWriter, r *http.Request, _ int64) {
@@ -63,7 +63,7 @@ func (s *Server) handleCatalogGifts(w http.ResponseWriter, r *http.Request, _ in
 			"title":       name,
 			"floor_ton":   0.0,
 			"volume_ton":  0.0,
-			"preview_url": giftchanges.OriginalPNGURL(name, 128),
+			"preview_url": s.previewOriginal(name, 128),
 		}
 		if it, ok := byFold[giftid.Fold(name)]; ok {
 			if it.FloorNano > 0 {
@@ -96,20 +96,30 @@ func (s *Server) handleCatalogGift(w http.ResponseWriter, r *http.Request, _ int
 		writeErr(w, http.StatusBadGateway, err.Error())
 		return
 	}
+	if err := s.ensureBackdropColors(r.Context()); err != nil && s.deps.Log != nil {
+		s.deps.Log.Warn("backdrop colours", "err", err)
+	}
 	models := make([]map[string]any, 0, len(sum.Models))
 	for _, m := range sum.Models {
 		models = append(models, map[string]any{
 			"name":        m.Name,
 			"rarity":      m.Rarity,
-			"preview_url": giftchanges.ModelPNGURL(gift, m.Name, 128),
+			"preview_url": s.previewModel(gift, m.Name, 128),
 		})
 	}
 	backdrops := make([]map[string]any, 0, len(sum.Backdrops))
 	for _, b := range sum.Backdrops {
-		backdrops = append(backdrops, map[string]any{
+		row := map[string]any{
 			"name":   b.Name,
 			"rarity": b.Rarity,
-		})
+		}
+		if c, e, p, t, ok := s.backdropColors(b.Name); ok {
+			row["center_color"] = c
+			row["edge_color"] = e
+			row["pattern_color"] = p
+			row["text_color"] = t
+		}
+		backdrops = append(backdrops, row)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"name":      firstNonEmptyStr(sum.Name, gift),
@@ -140,7 +150,7 @@ func (s *Server) handleCatalogModels(w http.ResponseWriter, r *http.Request, _ i
 					"name":        m.Name,
 					"title":       m.Name,
 					"rarity":      m.Rarity,
-					"preview_url": giftchanges.ModelPNGURL(gift, m.Name, 128),
+					"preview_url": s.previewModel(gift, m.Name, 128),
 				})
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"items": items, "total": len(items), "source": "giftchanges"})
@@ -168,7 +178,7 @@ func (s *Server) handleCatalogModels(w http.ResponseWriter, r *http.Request, _ i
 			"name":        it.Name,
 			"title":       firstNonEmptyStr(it.Title, it.Name),
 			"rarity":      0,
-			"preview_url": giftchanges.ModelPNGURL(gift, it.Name, 128),
+			"preview_url": s.previewModel(gift, it.Name, 128),
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items, "total": page.Total, "source": "mrkt"})
@@ -184,6 +194,7 @@ func (s *Server) handleCatalogBackdrops(w http.ResponseWriter, r *http.Request, 
 	model := strings.TrimSpace(r.URL.Query().Get("model"))
 
 	if s.deps.GiftChanges != nil {
+		_ = s.ensureBackdropColors(r.Context())
 		sum, err := s.deps.GiftChanges.Gift(r.Context(), gift)
 		if err == nil {
 			items := make([]map[string]any, 0, len(sum.Backdrops))
@@ -196,8 +207,13 @@ func (s *Server) handleCatalogBackdrops(w http.ResponseWriter, r *http.Request, 
 					"title":  b.Name,
 					"rarity": b.Rarity,
 				})
+				if c, e, p, t, ok := s.backdropColors(b.Name); ok {
+					items[len(items)-1]["center_color"] = c
+					items[len(items)-1]["edge_color"] = e
+					items[len(items)-1]["pattern_color"] = p
+					items[len(items)-1]["text_color"] = t
+				}
 			}
-			s.enrichBackdropColors(r.Context(), gift, items)
 			writeJSON(w, http.StatusOK, map[string]any{"items": items, "total": len(items), "source": "giftchanges"})
 			return
 		}
@@ -222,21 +238,58 @@ func (s *Server) handleCatalogBackdrops(w http.ResponseWriter, r *http.Request, 
 			"rarity": 0,
 		})
 	}
-	if s.deps.GiftChanges != nil {
-		s.enrichBackdropColors(r.Context(), gift, items)
-	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items, "total": page.Total, "source": "mrkt"})
 }
 
-func (s *Server) handleCatalogBackdropInfo(w http.ResponseWriter, r *http.Request, _ int64) {
-	if s.deps.GiftChanges == nil {
-		writeErr(w, http.StatusServiceUnavailable, "giftchanges unavailable")
-		return
+func (s *Server) handleAllBackdrops(w http.ResponseWriter, r *http.Request, _ int64) {
+	if err := s.ensureBackdropColors(r.Context()); err != nil && s.deps.Log != nil {
+		s.deps.Log.Warn("backdrop colours", "err", err)
 	}
+	list := []giftchanges.BackdropInfo{}
+	if s.deps.Assets != nil {
+		list = s.deps.Assets.AllBackdrops()
+	}
+	if len(list) == 0 && s.deps.GiftChanges != nil {
+		got, err := s.deps.GiftChanges.ListBackdrops(r.Context())
+		if err != nil {
+			writeErr(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		list = got
+	}
+	items := make([]map[string]any, 0, len(list))
+	for _, b := range list {
+		items = append(items, map[string]any{
+			"name":          b.Name,
+			"center_color":  b.CenterColor,
+			"edge_color":    b.EdgeColor,
+			"pattern_color": b.PatternColor,
+			"text_color":    b.TextColor,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items, "credit": "@GiftChanges"})
+}
+
+func (s *Server) handleCatalogBackdropInfo(w http.ResponseWriter, r *http.Request, _ int64) {
 	gift := strings.TrimSpace(r.PathValue("gift"))
 	backdrop := strings.TrimSpace(r.PathValue("backdrop"))
 	if gift == "" || backdrop == "" {
 		writeErr(w, http.StatusBadRequest, "gift and backdrop required")
+		return
+	}
+	_ = s.ensureBackdropColors(r.Context())
+	if c, e, p, t, ok := s.backdropColors(backdrop); ok {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"name":          backdrop,
+			"center_color":  c,
+			"edge_color":    e,
+			"pattern_color": p,
+			"text_color":    t,
+		})
+		return
+	}
+	if s.deps.GiftChanges == nil {
+		writeErr(w, http.StatusServiceUnavailable, "giftchanges unavailable")
 		return
 	}
 	info, err := s.deps.GiftChanges.BackdropInfo(r.Context(), gift, backdrop)
@@ -253,42 +306,24 @@ func (s *Server) handleCatalogBackdropInfo(w http.ResponseWriter, r *http.Reques
 	})
 }
 
-// enrichBackdropColors fills center/edge hex from GiftChanges (best-effort, concurrent).
-func (s *Server) enrichBackdropColors(ctx context.Context, gift string, items []map[string]any) {
-	if s.deps.GiftChanges == nil || len(items) == 0 {
-		return
+func (s *Server) ensureBackdropColors(ctx context.Context) error {
+	if s.deps.Assets != nil {
+		return s.deps.Assets.EnsureBackdrops(ctx)
 	}
-	const workers = 12
-	sem := make(chan struct{}, workers)
-	var wg sync.WaitGroup
-	var mu sync.Mutex
-	for i := range items {
-		name, _ := items[i]["name"].(string)
-		if strings.TrimSpace(name) == "" {
-			continue
+	if s.deps.GiftChanges == nil {
+		return nil
+	}
+	_, err := s.deps.GiftChanges.ListBackdrops(ctx)
+	return err
+}
+
+func (s *Server) backdropColors(name string) (center, edge, pattern, text string, ok bool) {
+	if s.deps.Assets != nil {
+		if info, found := s.deps.Assets.Backdrop(name); found {
+			return info.CenterColor, info.EdgeColor, info.PatternColor, info.TextColor, true
 		}
-		wg.Add(1)
-		go func(idx int, backdrop string) {
-			defer wg.Done()
-			select {
-			case sem <- struct{}{}:
-			case <-ctx.Done():
-				return
-			}
-			defer func() { <-sem }()
-			info, err := s.deps.GiftChanges.BackdropInfo(ctx, gift, backdrop)
-			if err != nil {
-				return
-			}
-			mu.Lock()
-			items[idx]["center_color"] = info.CenterColor
-			items[idx]["edge_color"] = info.EdgeColor
-			items[idx]["pattern_color"] = info.PatternColor
-			items[idx]["text_color"] = info.TextColor
-			mu.Unlock()
-		}(i, name)
 	}
-	wg.Wait()
+	return "", "", "", "", false
 }
 
 func catalogQueryFromRequest(r *http.Request) market.CatalogQuery {

@@ -7,11 +7,14 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
 	"github.com/reqiewu/order-bot/internal/applog"
+	"github.com/reqiewu/order-bot/internal/assetstore"
 	"github.com/reqiewu/order-bot/internal/botcmd"
 	"github.com/reqiewu/order-bot/internal/catalog"
 	"github.com/reqiewu/order-bot/internal/config"
@@ -26,6 +29,7 @@ import (
 	"github.com/reqiewu/order-bot/internal/notify"
 	"github.com/reqiewu/order-bot/internal/store"
 	"github.com/reqiewu/order-bot/internal/tguser"
+	"github.com/reqiewu/order-bot/internal/tmasession"
 	"github.com/reqiewu/order-bot/internal/tokencrypto"
 )
 
@@ -66,20 +70,16 @@ func main() {
 	rt, _ := st.GetRuntime()
 	fees := miniapp.FeesFromRuntime(rt)
 
-	mrktTok := market.NewMutableMRKT(cfg.MRKTToken)
-	portalsTok := market.NewMutableToken(cfg.PortalsTMA)
+	mrktTok := market.NewMutableMRKT("")
+	portalsTok := market.NewMutableToken("")
 	if st.HasMRKTToken() {
 		if t, err := st.MRKTToken(); err == nil && t != "" {
-			// Prefer bolt only if it still works; otherwise keep env.
 			probeCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			if err := market.ProbeMRKT(probeCtx, t); err == nil {
 				mrktTok.SetMRKT(t)
-				log.Info("MRKT token loaded from bolt")
+				log.Info("MRKT token loaded from session cache")
 			} else {
-				log.Warn("MRKT token in bolt is dead — using env if set", "err", err)
-				if mrktTok.Get() == "" {
-					mrktTok.SetMRKT(t) // still set so Mini App status reflects stored value
-				}
+				log.Warn("MRKT cached token dead — wait for Telegram session", "err", err)
 			}
 			cancel()
 		}
@@ -89,45 +89,24 @@ func main() {
 			probeCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			if err := market.ProbePortals(probeCtx, t); err == nil {
 				portalsTok.Set(t)
-				log.Info("Portals TMA loaded from bolt")
+				log.Info("Portals TMA loaded from session cache")
 			} else {
-				log.Warn("Portals TMA in bolt is dead — using env if set", "err", err)
-				if portalsTok.Get() == "" {
-					portalsTok.Set(t)
-				}
+				log.Warn("Portals cached token dead — wait for Telegram session", "err", err)
 			}
 			cancel()
 		}
 	}
 
-	getgemsKey := market.NormalizeGetgemsAPIKey(cfg.GetgemsAPIKey)
-	if st.HasGetgemsAPIKey() {
-		if t, err := st.GetgemsAPIKey(); err == nil && t != "" {
-			probeCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			if err := market.ProbeGetgems(probeCtx, t); err == nil {
-				getgemsKey = t
-				log.Info("Getgems API key loaded from bolt")
-			} else {
-				log.Warn("Getgems API key in bolt is dead — using env if set", "err", err)
-				if getgemsKey == "" {
-					getgemsKey = t
-				}
-			}
-			cancel()
-		}
-	}
-	tonnelInit := market.NormalizePortalsTMA(cfg.TonnelInitData)
+	getgems := market.NewGetgems(market.GetgemsConfig{})
+	tonnelInit := ""
 	if st.HasTonnelInitData() {
 		if t, err := st.TonnelInitData(); err == nil && t != "" {
 			probeCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			if err := market.ProbeTonnelInitData(probeCtx, t); err == nil {
 				tonnelInit = t
-				log.Info("Tonnel initData loaded from bolt")
+				log.Info("Tonnel initData loaded from session cache")
 			} else {
-				log.Warn("Tonnel initData in bolt is dead — using env if set", "err", err)
-				if tonnelInit == "" {
-					tonnelInit = t
-				}
+				log.Warn("Tonnel cached token dead — wait for Telegram session", "err", err)
 			}
 			cancel()
 		}
@@ -135,8 +114,6 @@ func main() {
 
 	mrkt := market.NewMRKT(market.Config{Auth: mrktTok})
 	portals := market.NewPortals(market.PortalsConfig{Auth: portalsTok})
-	// Always construct so Mini App can enable Getgems without restart.
-	getgems := market.NewGetgems(market.GetgemsConfig{APIKey: getgemsKey})
 
 	readers := map[string]marketport.MarketReader{
 		marketport.MarketMRKT:    mrkt,
@@ -164,7 +141,7 @@ func main() {
 		if err != nil {
 			log.Warn("Telegram user client", "err", err)
 		} else if !tgUser.HasSessionFile() {
-			log.Info("telegram market off — no session; go run ./cmd/tg-login")
+			log.Warn("Telegram session missing — update via tg-login")
 			tgUser = nil
 		} else {
 			tgMarket = market.NewTelegram(market.TelegramConfig{User: tgUser})
@@ -173,7 +150,7 @@ func main() {
 	} else if cfg.TelegramUserOff {
 		log.Info("telegram market off")
 	} else {
-		log.Info("telegram market off — no TELEGRAM_API_ID / TELEGRAM_API_HASH")
+		log.Warn("Telegram session missing — set TELEGRAM_API_ID / TELEGRAM_API_HASH")
 	}
 
 	probeCtx, cancelProbe := context.WithTimeout(context.Background(), 15*time.Second)
@@ -206,18 +183,22 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	var tgSessionOK atomic.Bool
 	if tgUser != nil {
 		go func() {
-			if err := tgUser.Run(ctx); err != nil && ctx.Err() == nil {
-				log.Warn("Telegram MTProto stopped", "err", err)
+			err := tgUser.Run(ctx)
+			tgSessionOK.Store(false)
+			if err != nil && ctx.Err() == nil {
+				log.Warn("Telegram session stopped — update via tg-login", "err", err)
 			}
 		}()
 		waitCtx, cancelWait := context.WithTimeout(ctx, 45*time.Second)
 		if err := tgUser.WaitReady(waitCtx, 45*time.Second); err != nil {
-			log.Warn("Telegram MTProto not ready — venue skipped this boot", "err", err)
+			log.Warn("Telegram session not ready — update via tg-login", "err", err)
 			delete(readers, marketport.MarketTelegram)
 			tgMarket = nil
 		} else {
+			tgSessionOK.Store(true)
 			log.Info("Telegram MTProto ready (Gift Marketplace asks)")
 			probeCtx2, cancel2 := context.WithTimeout(ctx, 15*time.Second)
 			if err := tgMarket.CheckAuth(probeCtx2); err != nil {
@@ -226,6 +207,19 @@ func main() {
 				log.Info("Telegram getStarGifts ok")
 			}
 			cancel2()
+
+			minter := &tmasession.Targets{
+				User:    tgUser,
+				Store:   st,
+				Log:     log,
+				MRKT:    mrktTok,
+				Portals: portalsTok,
+				Tonnel:  tonnel,
+			}
+			mintCtx, cancelMint := context.WithTimeout(ctx, 60*time.Second)
+			minter.Refresh(mintCtx)
+			cancelMint()
+			go minter.Loop(ctx)
 		}
 		cancelWait()
 	}
@@ -271,11 +265,19 @@ func main() {
 		os.Exit(1)
 	}
 	if miniCfg.Enabled() {
+		gc := giftchanges.NewGiftChanges()
+		assetsDir := strings.TrimSpace(os.Getenv("ASSETS_DIR"))
+		if assetsDir == "" {
+			assetsDir = filepath.Join(filepath.Dir(cfg.BoltPath), "assets")
+		}
+		assets := assetstore.New(assetsDir, gc, log)
+		go assets.Sync(ctx)
 		srv := miniapp.New(miniapp.Deps{
 			Config:      miniCfg,
 			Store:       st,
 			Log:         log,
-			GiftChanges: giftchanges.NewGiftChanges(),
+			GiftChanges: gc,
+			Assets:      assets,
 			MRKT:        mrkt,
 			Portals:     portals,
 			Getgems:     getgems,
@@ -289,6 +291,7 @@ func main() {
 				}
 				return tonnel.InitData()
 			},
+			TGSessionOK: tgSessionOK.Load,
 			Hooks: miniapp.TokenHooks{
 				OnMRKT: func(t string) {
 					mrktTok.SetMRKT(t)
@@ -370,35 +373,33 @@ func checkTokens(
 	_ *market.Telegram, // probed after MTProto ready
 ) {
 	if mrktTok.Get() == "" {
-		log.Info("mrkt off — no MRKT_TOKEN")
+		log.Info("mrkt waiting for Telegram session")
 	} else if err := mrkt.CheckAuth(ctx); err != nil {
-		log.Warn("MRKT token dead — update in Mini App", "err", err)
+		log.Warn("MRKT token dead — update Telegram session", "err", err)
 	} else {
 		log.Info("MRKT token ok")
 	}
 
 	if portalsTok.Get() == "" {
-		log.Info("portals off — no PORTALS_TOKEN")
+		log.Info("portals waiting for Telegram session")
 	} else if err := portals.CheckAuth(ctx); err != nil {
-		log.Warn("Portals token dead — update in Mini App", "err", err)
+		log.Warn("Portals token dead — update Telegram session", "err", err)
 	} else {
 		log.Info("Portals token ok")
 	}
 
-	if !getgems.HasAPIKey() {
-		log.Info("getgems off — no GETGEMS_TOKEN")
-	} else if err := getgems.CheckAuth(ctx); err != nil {
-		log.Warn("Getgems token dead", "err", err)
+	if err := getgems.CheckAuth(ctx); err != nil {
+		log.Warn("Getgems GraphQL probe failed", "err", err)
 	} else {
-		log.Info("Getgems token ok")
+		log.Info("Getgems GraphQL ok")
 	}
 
 	if tonnel == nil {
 		log.Info("tonnel off")
 	} else if !tonnel.HasInitData() {
-		log.Info("tonnel off — no TONNEL_TOKEN")
+		log.Info("tonnel waiting for Telegram session")
 	} else if err := tonnel.CheckAuth(ctx); err != nil {
-		log.Warn("Tonnel token dead", "err", err)
+		log.Warn("Tonnel token dead — update Telegram session", "err", err)
 	} else {
 		log.Info("Tonnel token ok")
 	}

@@ -9,6 +9,7 @@ services:
     environment:
       BOLT_PATH: /data/order-bot.db
       MINIAPP_STATIC_DIR: /app/web/dist
+      ASSETS_DIR: /data/assets
       # tg-login пишет ./data/tg.session на хосте; в контейнере это не ./data
       TELEGRAM_SESSION_PATH: /session/tg.session
     ports:

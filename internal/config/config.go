@@ -11,10 +11,6 @@ import (
 type Config struct {
 	TelegramToken   string
 	OperatorID      int64
-	MRKTToken       string
-	PortalsTMA      string
-	GetgemsAPIKey   string
-	TonnelInitData  string
 	TonnelBaseURL   string
 	TonnelDisabled  bool
 	TelegramAPIID   int
@@ -30,10 +26,6 @@ type Config struct {
 func FromEnv() (Config, error) {
 	cfg := Config{
 		TelegramToken:   strings.TrimSpace(os.Getenv("TELEGRAM_BOT_TOKEN")),
-		MRKTToken:       envFirst("MRKT_TOKEN"),
-		PortalsTMA:      envFirst("PORTALS_TOKEN", "PORTALS_TMA"),
-		GetgemsAPIKey:   envFirst("GETGEMS_TOKEN", "GETGEMS_API_KEY"),
-		TonnelInitData:  envFirst("TONNEL_TOKEN", "TONNEL_INITDATA"),
 		TonnelBaseURL:   strings.TrimSpace(os.Getenv("TONNEL_BASE_URL")),
 		TonnelDisabled:  envTruthy("TONNEL_DISABLED"),
 		TelegramAPIHash: strings.TrimSpace(os.Getenv("TELEGRAM_API_HASH")),

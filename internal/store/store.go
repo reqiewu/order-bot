@@ -28,6 +28,9 @@ func Open(path string) (*Store, error) {
 	}
 	db, err := bbolt.Open(path, 0o600, &bbolt.Options{Timeout: 2 * time.Second})
 	if err != nil {
+		if os.IsPermission(err) {
+			return nil, fmt.Errorf("bolt open %s: %w", path, err)
+		}
 		return nil, fmt.Errorf("bolt open %s: %w (уже запущен другой order-bot?)", path, err)
 	}
 	s := &Store{db: db}

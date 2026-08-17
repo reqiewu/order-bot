@@ -9,8 +9,8 @@ import (
 )
 
 const (
-	getgemsMinInterval = 400 * time.Millisecond
-	getgemsJitterMax   = 200 * time.Millisecond
+	getgemsMinInterval = 80 * time.Millisecond
+	getgemsJitterMax   = 40 * time.Millisecond
 )
 
 type getgemsGate struct {

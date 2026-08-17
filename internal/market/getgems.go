@@ -1,7 +1,6 @@
 package market
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -18,26 +17,37 @@ import (
 	"github.com/reqiewu/order-bot/internal/marketport"
 )
 
-var errGetgemsNotFound = errors.New("market/getgems: not found")
-
 const (
-	defaultGetgemsBaseURL = "https://api.getgems.io/public-api/v1"
-	getgemsMaxPages       = 3 // быстрый poll: не весь стакан
-	getgemsPageSize       = 100
+	defaultGetgemsGraphQL = "https://getgems.io/graphql/"
+	getgemsMaxPages       = 3
+	getgemsPageSize       = 35 // GraphQL alphaNftItemSearch first: max 35
 	getgemsColCacheTTL    = 30 * time.Minute
 	getgemsListCacheTTL   = time.Second
+	getgemsCatalogPages   = 20
+
+	// Apollo APQ hashes: sha256(print(addTypenameToDocument(query))) from Getgems frontend.
+	gqlHashNftSearchInstantSell      = "8ae83a1f1f0c5d89da8ad1535505d91105b73572827d08d368067eac4fcf6346"
+	gqlHashCollectionSearch          = "3fd06be62db13d0989dc456b2986fc6c4088b389867bda3f186d3227a3041bab"
+	gqlHashGetNftCollectionByAddr    = "010160c8c075e3e3d5e46105b03a31b36344cc7e912ca922e1d16a9467e7980e"
+	gqlHashHistoryCollectionNftItems = "d14d1e21fd84908c93c118a231fa723ba753f6ba3fd59a9ff364fbe6362eefce"
+	gqlHashGetNftByAddress           = "263b0de8a04fa6de72c9982b791f9f8933b44741b6b0d03b9dd4f4ba090b8b73"
+
+	gqlTelegramGiftsAddr = "EQAbfjxb1uxz66R_c6sjdYysf7kuERaRAvcDXIYfSHWTRwuz"
+	gqlSortFixPriceAsc   = `[{"fixPrice":{"order":"asc"}},{"index":{"order":"asc"}}]`
 )
 
-// GetgemsConfig — Read API Getgems (нужен API key).
+var errGetgemsUnknownCollection = errors.New("market/getgems: unknown collection")
+
+// GetgemsConfig — фронтовый GraphQL Getgems (без Read API key).
 type GetgemsConfig struct {
 	BaseURL   string
-	APIKey    string
+	APIKey    string // unused; listings go through public GraphQL
 	HTTP      *http.Client
 	MaxPages  int
 	ListLimit int
 }
 
-// Getgems — ридер Telegram Gifts на Getgems (листинги + activity/sold).
+// Getgems — ридер Telegram Gifts на Getgems через persisted GraphQL.
 type Getgems struct {
 	baseURL   string
 	http      *http.Client
@@ -49,17 +59,17 @@ type Getgems struct {
 	apiKey string
 
 	colMu      sync.Mutex
-	colByFold  map[string]string // fold(name) → collection address
+	colCache   []getgemsNamedCol
 	colFetched time.Time
 
 	listMu    sync.Mutex
-	listCache map[string]getgemsListCacheEntry // collection address → raw on-sale
+	listCache map[string]getgemsListCacheEntry
 }
 
 func NewGetgems(cfg GetgemsConfig) *Getgems {
 	base := strings.TrimRight(cfg.BaseURL, "/")
 	if base == "" {
-		base = defaultGetgemsBaseURL
+		base = strings.TrimRight(defaultGetgemsGraphQL, "/")
 	}
 	client := cfg.HTTP
 	if client == nil {
@@ -84,7 +94,7 @@ func NewGetgems(cfg GetgemsConfig) *Getgems {
 
 var _ marketport.MarketReader = (*Getgems)(nil)
 
-// SetAPIKey обновляет Read API key без рестарта (Mini App).
+// SetAPIKey сохранён для Mini App hook; GraphQL его не использует.
 func (g *Getgems) SetAPIKey(key string) {
 	if g == nil {
 		return
@@ -94,7 +104,6 @@ func (g *Getgems) SetAPIKey(key string) {
 	g.keyMu.Unlock()
 }
 
-// APIKey — текущий ключ (для Live-статуса Mini App).
 func (g *Getgems) APIKey() string {
 	if g == nil {
 		return ""
@@ -108,37 +117,21 @@ func (g *Getgems) HasAPIKey() bool {
 	return strings.TrimSpace(g.APIKey()) != ""
 }
 
-func (g *Getgems) Enabled() bool { return g != nil && g.HasAPIKey() }
+func (g *Getgems) Enabled() bool { return g != nil }
 
 type getgemsListCacheEntry struct {
 	at    time.Time
 	items []getgemsNFT
 }
 
-type getgemsEnvelope struct {
-	Success  bool            `json:"success"`
-	Response json.RawMessage `json:"response"`
-}
-
-type getgemsItemsPage struct {
-	Cursor string       `json:"cursor"`
-	Items  []getgemsNFT `json:"items"`
-}
-
 type getgemsNFT struct {
-	Address           string             `json:"address"`
-	Index             int                `json:"index"`
-	Name              string             `json:"name"`
-	CollectionAddress string             `json:"collectionAddress"`
-	CollectionName    string             `json:"collectionName"`
-	Collection        *getgemsCollection `json:"collection"`
-	Attributes        []getgemsAttr      `json:"attributes"`
-	Sale              *getgemsSale       `json:"sale"`
-}
-
-type getgemsCollection struct {
-	Address string `json:"address"`
-	Name    string `json:"name"`
+	Address           string
+	Index             int
+	Name              string
+	CollectionAddress string
+	CollectionName    string
+	Attributes        []getgemsAttr
+	Sale              *getgemsSale
 }
 
 type getgemsAttr struct {
@@ -147,34 +140,28 @@ type getgemsAttr struct {
 }
 
 type getgemsSale struct {
-	Type      string `json:"type"`
-	FullPrice string `json:"fullPrice"`
-	Currency  string `json:"currency"`
-}
-
-type getgemsHistoryPage struct {
-	Cursor string             `json:"cursor"`
-	Items  []getgemsHistoryEl `json:"items"`
-}
-
-type getgemsHistoryEl struct {
-	Address           string          `json:"address"`
-	Name              string          `json:"name"`
-	Time              string          `json:"time"`
-	CollectionAddress string          `json:"collectionAddress"`
-	TypeData          getgemsTypeData `json:"typeData"`
-}
-
-type getgemsTypeData struct {
-	Type      string `json:"type"`
-	Price     string `json:"price"`
-	PriceNano string `json:"priceNano"`
-	Currency  string `json:"currency"`
+	Type      string
+	FullPrice string
+	Currency  string
 }
 
 func (g *Getgems) CheckAuth(ctx context.Context) error {
-	_, err := g.get(ctx, "/gifts/collections", url.Values{"limit": {"1"}})
-	return err
+	var data struct {
+		NFTCollectionByAddress *struct {
+			Address string `json:"address"`
+			Name    string `json:"name"`
+			Type    string `json:"type"`
+		} `json:"nftCollectionByAddress"`
+	}
+	if err := g.gql(ctx, "getNftCollectionByAddress", gqlHashGetNftCollectionByAddr, map[string]any{
+		"address": gqlTelegramGiftsAddr,
+	}, &data); err != nil {
+		return err
+	}
+	if data.NFTCollectionByAddress == nil || strings.TrimSpace(data.NFTCollectionByAddress.Address) == "" {
+		return fmt.Errorf("market/getgems: empty graphql collection")
+	}
+	return nil
 }
 
 func (g *Getgems) List(ctx context.Context, watch marketport.WatchItem) ([]marketport.Listing, error) {
@@ -182,10 +169,13 @@ func (g *Getgems) List(ctx context.Context, watch marketport.WatchItem) ([]marke
 		return nil, fmt.Errorf("market/getgems: empty collection")
 	}
 	addr, err := g.resolveCollection(ctx, watch.Collection)
+	if errors.Is(err, errGetgemsUnknownCollection) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}
-	raw, err := g.listOnSaleCached(ctx, addr)
+	raw, err := g.listOnSaleCached(ctx, addr, watch.Model, watch.Backdrop)
 	if err != nil {
 		return nil, err
 	}
@@ -198,7 +188,7 @@ func (g *Getgems) List(ctx context.Context, watch marketport.WatchItem) ([]marke
 		if !ok {
 			continue
 		}
-		if giftid.Fold(lot.Collection) != wantColl {
+		if wantColl != "" && giftid.Fold(lot.Collection) != wantColl && !giftid.SameCollection(lot.Collection, watch.Collection) && !getgemsNameClose(lot.Collection, watch.Collection) {
 			continue
 		}
 		if wantModel != "" && giftid.Fold(lot.Model) != wantModel {
@@ -217,49 +207,57 @@ func (g *Getgems) RecentSales(ctx context.Context, like marketport.Listing, limi
 		limit = marketport.DefaultSaleLimit
 	}
 	addr, err := g.resolveCollection(ctx, like.Collection)
+	if errors.Is(err, errGetgemsUnknownCollection) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}
-	q := url.Values{}
-	q.Set("limit", strconv.Itoa(getgemsPageSize))
-	q.Set("types", "sold")
-	var out []marketport.Sale
-	cursor := ""
 	wantModel := giftid.Fold(like.Model)
 	wantBG := giftid.Fold(like.Backdrop)
+	needHydrate := wantModel != "" || wantBG != ""
+	histLimit := limit * 3
+	if histLimit < 10 {
+		histLimit = 10
+	}
+	if histLimit > getgemsPageSize {
+		histLimit = getgemsPageSize
+	}
+	var out []marketport.Sale
+	cursor := ""
 	for page := 0; page < g.maxPages && len(out) < limit; page++ {
-		if cursor != "" {
-			q.Set("after", cursor)
+		vars := map[string]any{
+			"collectionAddress": addr,
+			"count":             histLimit,
+			"types":             []string{"Sold"},
 		}
-		raw, err := g.get(ctx, "/collection/history/"+url.PathEscape(addr), q)
-		if err != nil {
+		if cursor != "" {
+			vars["cursor"] = cursor
+		}
+		var data struct {
+			History *struct {
+				Cursor string         `json:"cursor"`
+				Items  []gqlHistoryEl `json:"items"`
+			} `json:"historyCollectionNftItems"`
+		}
+		if err := g.gql(ctx, "historyCollectionNftItems", gqlHashHistoryCollectionNftItems, vars, &data); err != nil {
 			return nil, err
 		}
-		var pageData getgemsHistoryPage
-		if err := json.Unmarshal(raw, &pageData); err != nil {
-			return nil, fmt.Errorf("market/getgems: decode history: %w", err)
-		}
-		if len(pageData.Items) == 0 {
+		if data.History == nil || len(data.History.Items) == 0 {
 			break
 		}
-		addrs := make([]string, 0, len(pageData.Items))
-		for _, el := range pageData.Items {
-			if a := strings.TrimSpace(el.Address); a != "" {
-				addrs = append(addrs, a)
-			}
-		}
-		hydrated, _ := g.nftsByAddress(ctx, addrs)
-		for _, el := range pageData.Items {
-			sale, ok := normalizeGetgemsSale(el, like.Collection)
+		for _, el := range data.History.Items {
+			sale, ok := normalizeGetgemsHistory(el, like.Collection)
 			if !ok {
 				continue
 			}
-			if n, ok := hydrated[strings.TrimSpace(el.Address)]; ok {
-				model, backdrop, _ := attrsFromGetgems(n.Attributes)
-				sale.Model = model
-				sale.Backdrop = backdrop
+			if needHydrate {
+				if n, err := g.nftByAddress(ctx, strings.TrimSpace(el.Address)); err == nil {
+					model, backdrop, _ := attrsFromGetgems(n.Attributes)
+					sale.Model = model
+					sale.Backdrop = backdrop
+				}
 			}
-			// History часто без model/backdrop — тогда берём как collection-wide comps.
 			if wantModel != "" && sale.Model != "" && giftid.Fold(sale.Model) != wantModel {
 				continue
 			}
@@ -271,7 +269,7 @@ func (g *Getgems) RecentSales(ctx context.Context, like marketport.Listing, limi
 				break
 			}
 		}
-		next := strings.TrimSpace(pageData.Cursor)
+		next := strings.TrimSpace(data.History.Cursor)
 		if next == "" || next == cursor {
 			break
 		}
@@ -280,10 +278,11 @@ func (g *Getgems) RecentSales(ctx context.Context, like marketport.Listing, limi
 	return out, nil
 }
 
-func (g *Getgems) listOnSaleCached(ctx context.Context, colAddr string) ([]getgemsNFT, error) {
+func (g *Getgems) listOnSaleCached(ctx context.Context, colAddr, model, backdrop string) ([]getgemsNFT, error) {
+	key := colAddr + "\x00" + giftid.Fold(model) + "\x00" + giftid.Fold(backdrop)
 	g.listMu.Lock()
 	if g.listCache != nil {
-		if e, ok := g.listCache[colAddr]; ok && time.Since(e.at) < getgemsListCacheTTL {
+		if e, ok := g.listCache[key]; ok && time.Since(e.at) < getgemsListCacheTTL {
 			out := append([]getgemsNFT(nil), e.items...)
 			g.listMu.Unlock()
 			return out, nil
@@ -291,7 +290,7 @@ func (g *Getgems) listOnSaleCached(ctx context.Context, colAddr string) ([]getge
 	}
 	g.listMu.Unlock()
 
-	items, err := g.listOnSale(ctx, colAddr)
+	items, err := g.listOnSale(ctx, colAddr, model, backdrop)
 	if err != nil {
 		return nil, err
 	}
@@ -299,246 +298,321 @@ func (g *Getgems) listOnSaleCached(ctx context.Context, colAddr string) ([]getge
 	if g.listCache == nil {
 		g.listCache = map[string]getgemsListCacheEntry{}
 	}
-	g.listCache[colAddr] = getgemsListCacheEntry{
-		at:    time.Now(),
-		items: append([]getgemsNFT(nil), items...),
-	}
+	g.listCache[key] = getgemsListCacheEntry{at: time.Now(), items: append([]getgemsNFT(nil), items...)}
 	g.listMu.Unlock()
 	return items, nil
 }
 
-func (g *Getgems) listOnSale(ctx context.Context, colAddr string) ([]getgemsNFT, error) {
+func (g *Getgems) listOnSale(ctx context.Context, colAddr, model, backdrop string) ([]getgemsNFT, error) {
+	queryObj := map[string]any{
+		"$and": []any{
+			map[string]any{"collectionAddressList": []string{colAddr}},
+			map[string]any{"saleType": "fix_price"},
+		},
+	}
+	queryRaw, err := json.Marshal(queryObj)
+	if err != nil {
+		return nil, err
+	}
+	vars := map[string]any{
+		"count": getgemsPageSize,
+		"query": string(queryRaw),
+		"sort":  gqlSortFixPriceAsc,
+	}
+	if attrs := getgemsAttributesJSON(model, backdrop); attrs != "" {
+		vars["attributes"] = attrs
+	}
+
 	seen := map[string]struct{}{}
 	var out []getgemsNFT
-	for _, path := range []string{
-		"/nfts/offchain/on-sale/" + url.PathEscape(colAddr),
-		"/nfts/on-sale/" + url.PathEscape(colAddr),
-	} {
-		cursor := ""
-		q := url.Values{}
-		q.Set("limit", strconv.Itoa(getgemsPageSize))
-		for page := 0; page < g.maxPages; page++ {
-			if cursor != "" {
-				q.Set("after", cursor)
-			}
-			raw, err := g.get(ctx, path, q)
-			if err != nil {
-				if errors.Is(err, errGetgemsNotFound) {
-					break
-				}
-				if len(out) > 0 {
-					break
-				}
-				return nil, err
-			}
-			var pg getgemsItemsPage
-			if err := json.Unmarshal(raw, &pg); err != nil {
-				return nil, fmt.Errorf("market/getgems: decode on-sale: %w", err)
-			}
-			if len(pg.Items) == 0 {
-				break
-			}
-			for _, n := range pg.Items {
-				id := strings.TrimSpace(n.Address)
-				if id == "" {
-					continue
-				}
-				if _, ok := seen[id]; ok {
-					continue
-				}
-				seen[id] = struct{}{}
-				out = append(out, n)
-			}
-			if len(out) >= g.listLimit {
-				return out, nil
-			}
-			next := strings.TrimSpace(pg.Cursor)
-			if next == "" || next == cursor {
-				break
-			}
-			cursor = next
+	cursor := ""
+	for page := 0; page < g.maxPages; page++ {
+		if cursor != "" {
+			vars["cursor"] = cursor
 		}
+		var data struct {
+			Search *struct {
+				Edges []struct {
+					Cursor string     `json:"cursor"`
+					Node   gqlNftNode `json:"node"`
+				} `json:"edges"`
+				Info struct {
+					HasNextPage bool `json:"hasNextPage"`
+				} `json:"info"`
+			} `json:"alphaNftItemSearch"`
+		}
+		if err := g.gql(ctx, "nftSearchInstantSell", gqlHashNftSearchInstantSell, vars, &data); err != nil {
+			return nil, err
+		}
+		if data.Search == nil || len(data.Search.Edges) == 0 {
+			break
+		}
+		var lastCursor string
+		for _, e := range data.Search.Edges {
+			n := nftFromGQL(e.Node)
+			id := strings.TrimSpace(n.Address)
+			if id == "" {
+				continue
+			}
+			if _, ok := seen[id]; ok {
+				continue
+			}
+			seen[id] = struct{}{}
+			out = append(out, n)
+			lastCursor = strings.TrimSpace(e.Cursor)
+		}
+		if len(out) >= g.listLimit {
+			return out, nil
+		}
+		if !data.Search.Info.HasNextPage || lastCursor == "" || lastCursor == cursor {
+			break
+		}
+		cursor = lastCursor
 	}
 	return out, nil
+}
+
+type getgemsNamedCol struct {
+	Name    string
+	Address string
 }
 
 func (g *Getgems) resolveCollection(ctx context.Context, name string) (string, error) {
-	fold := giftid.Fold(name)
-	g.colMu.Lock()
-	if g.colByFold != nil && time.Since(g.colFetched) < getgemsColCacheTTL {
-		if addr, ok := g.colByFold[fold]; ok {
-			g.colMu.Unlock()
-			return addr, nil
-		}
-	}
-	g.colMu.Unlock()
-	m, err := g.fetchCollections(ctx)
+	cols, err := g.giftCollections(ctx)
 	if err != nil {
 		return "", err
 	}
-	addr, ok := m[fold]
-	if !ok {
-		return "", fmt.Errorf("market/getgems: unknown collection %q", name)
+	bestAddr := ""
+	bestScore := 0
+	for _, c := range cols {
+		sc := getgemsCollectionScore(name, c.Name)
+		if sc > bestScore {
+			bestScore = sc
+			bestAddr = c.Address
+		}
 	}
-	return addr, nil
+	if bestScore < 2 || bestAddr == "" {
+		return "", fmt.Errorf("%w %q", errGetgemsUnknownCollection, name)
+	}
+	return bestAddr, nil
 }
 
-func (g *Getgems) fetchCollections(ctx context.Context) (map[string]string, error) {
-	out := map[string]string{}
-	cursor := ""
-	q := url.Values{}
-	q.Set("limit", strconv.Itoa(getgemsPageSize))
-	for page := 0; page < g.maxPages; page++ {
-		if cursor != "" {
-			q.Set("after", cursor)
-		}
-		raw, err := g.get(ctx, "/gifts/collections", q)
-		if err != nil {
-			return nil, err
-		}
-		var pg struct {
-			Cursor string `json:"cursor"`
-			Items  []struct {
-				Address string `json:"address"`
-				Name    string `json:"name"`
-			} `json:"items"`
-		}
-		if err := json.Unmarshal(raw, &pg); err != nil {
-			return nil, fmt.Errorf("market/getgems: decode collections: %w", err)
-		}
-		if len(pg.Items) == 0 {
-			break
-		}
-		for _, it := range pg.Items {
-			if it.Address == "" || it.Name == "" {
-				continue
-			}
-			out[giftid.Fold(it.Name)] = it.Address
-		}
-		next := strings.TrimSpace(pg.Cursor)
-		if next == "" || next == cursor {
-			break
-		}
-		cursor = next
-	}
+func (g *Getgems) giftCollections(ctx context.Context) ([]getgemsNamedCol, error) {
 	g.colMu.Lock()
-	g.colByFold = out
-	g.colFetched = time.Now()
+	if len(g.colCache) > 0 && time.Since(g.colFetched) < getgemsColCacheTTL {
+		out := append([]getgemsNamedCol(nil), g.colCache...)
+		g.colMu.Unlock()
+		return out, nil
+	}
 	g.colMu.Unlock()
-	return out, nil
-}
 
-func (g *Getgems) nftsByAddress(ctx context.Context, addrs []string) (map[string]getgemsNFT, error) {
-	seen := map[string]struct{}{}
-	var uniq []string
-	for _, a := range addrs {
-		a = strings.TrimSpace(a)
-		if a == "" {
-			continue
-		}
-		if _, ok := seen[a]; ok {
-			continue
-		}
-		seen[a] = struct{}{}
-		uniq = append(uniq, a)
+	queryObj := map[string]any{
+		"$and": []any{
+			map[string]any{"collectionAddressList": []string{gqlTelegramGiftsAddr}},
+		},
 	}
-	if len(uniq) == 0 {
-		return nil, nil
-	}
-	out := map[string]getgemsNFT{}
-	const batch = 100
-	for i := 0; i < len(uniq); i += batch {
-		end := i + batch
-		if end > len(uniq) {
-			end = len(uniq)
-		}
-		raw, err := g.post(ctx, "/nfts/list", map[string]any{"addressList": uniq[i:end]})
-		if err != nil {
-			return out, err
-		}
-		var pg getgemsItemsPage
-		if err := json.Unmarshal(raw, &pg); err != nil {
-			var items []getgemsNFT
-			if err2 := json.Unmarshal(raw, &items); err2 != nil {
-				return out, fmt.Errorf("market/getgems: decode nfts/list: %w", err)
-			}
-			pg.Items = items
-		}
-		for _, n := range pg.Items {
-			id := strings.TrimSpace(n.Address)
-			if id != "" {
-				out[id] = n
-			}
-		}
-	}
-	return out, nil
-}
-
-func (g *Getgems) get(ctx context.Context, path string, q url.Values) (json.RawMessage, error) {
-	return g.do(ctx, http.MethodGet, path, q, nil)
-}
-
-func (g *Getgems) post(ctx context.Context, path string, payload any) (json.RawMessage, error) {
-	return g.do(ctx, http.MethodPost, path, nil, payload)
-}
-
-func (g *Getgems) do(ctx context.Context, method, path string, q url.Values, payload any) (json.RawMessage, error) {
-	apiKey := g.APIKey()
-	if apiKey == "" {
-		return nil, ErrEmptyToken
-	}
-	if err := g.gate.wait(ctx); err != nil {
-		return nil, err
-	}
-	u := g.baseURL + path
-	if len(q) > 0 {
-		u += "?" + q.Encode()
-	}
-	var bodyReader io.Reader
-	if payload != nil {
-		raw, err := json.Marshal(payload)
-		if err != nil {
-			return nil, err
-		}
-		bodyReader = bytes.NewReader(raw)
-	}
-	req, err := http.NewRequestWithContext(ctx, method, u, bodyReader)
+	queryRaw, err := json.Marshal(queryObj)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Authorization", apiKey)
-	req.Header.Set("User-Agent", "order-bot/1.0")
-	if payload != nil {
-		req.Header.Set("Content-Type", "application/json")
+	var cols []getgemsNamedCol
+	cursor := ""
+	for page := 0; page < getgemsCatalogPages; page++ {
+		vars := map[string]any{
+			"count": getgemsPageSize,
+			"query": string(queryRaw),
+		}
+		if cursor != "" {
+			vars["cursor"] = cursor
+		}
+		var data struct {
+			Search *struct {
+				Edges []struct {
+					Cursor string `json:"cursor"`
+					Node   struct {
+						Address string `json:"address"`
+						Name    string `json:"name"`
+					} `json:"node"`
+				} `json:"edges"`
+				Info struct {
+					HasNextPage bool `json:"hasNextPage"`
+				} `json:"info"`
+			} `json:"alphaNftCollectionSearch"`
+		}
+		if err := g.gql(ctx, "collectionSearch", gqlHashCollectionSearch, vars, &data); err != nil {
+			return nil, err
+		}
+		if data.Search == nil || len(data.Search.Edges) == 0 {
+			break
+		}
+		var lastCursor string
+		for _, e := range data.Search.Edges {
+			addr := strings.TrimSpace(e.Node.Address)
+			nm := strings.TrimSpace(e.Node.Name)
+			if addr == "" || nm == "" {
+				continue
+			}
+			cols = append(cols, getgemsNamedCol{Name: nm, Address: addr})
+			lastCursor = strings.TrimSpace(e.Cursor)
+		}
+		if !data.Search.Info.HasNextPage || lastCursor == "" || lastCursor == cursor {
+			break
+		}
+		cursor = lastCursor
 	}
+	g.colMu.Lock()
+	g.colCache = append([]getgemsNamedCol(nil), cols...)
+	g.colFetched = time.Now()
+	g.colMu.Unlock()
+	return cols, nil
+}
+
+func (g *Getgems) nftByAddress(ctx context.Context, addr string) (getgemsNFT, error) {
+	addr = strings.TrimSpace(addr)
+	if addr == "" {
+		return getgemsNFT{}, fmt.Errorf("market/getgems: empty nft address")
+	}
+	var data struct {
+		NFT *gqlNftNode `json:"nft"`
+	}
+	if err := g.gql(ctx, "getNftByAddress", gqlHashGetNftByAddress, map[string]any{
+		"address": addr,
+	}, &data); err != nil {
+		return getgemsNFT{}, err
+	}
+	if data.NFT == nil {
+		return getgemsNFT{}, fmt.Errorf("market/getgems: nft %s not found", addr)
+	}
+	n := nftFromGQL(*data.NFT)
+	if strings.TrimSpace(n.Address) == "" {
+		n.Address = addr
+	}
+	return n, nil
+}
+
+type gqlNftNode struct {
+	Name       string        `json:"name"`
+	Address    string        `json:"address"`
+	Index      int           `json:"index"`
+	Attributes []getgemsAttr `json:"attributes"`
+	Collection *struct {
+		Address string `json:"address"`
+		Name    string `json:"name"`
+		Type    string `json:"type"`
+	} `json:"collection"`
+	Sale *struct {
+		Typename  string `json:"__typename"`
+		FullPrice string `json:"fullPrice"`
+		Currency  string `json:"currency"`
+	} `json:"sale"`
+}
+
+type gqlHistoryEl struct {
+	Address string          `json:"address"`
+	Time    json.RawMessage `json:"time"`
+	NFT     *struct {
+		Name    string `json:"name"`
+		Address string `json:"address"`
+	} `json:"nft"`
+	TypeData struct {
+		Typename string `json:"__typename"`
+		Type     string `json:"type"`
+		Price    string `json:"price"`
+		Currency string `json:"currency"`
+	} `json:"typeData"`
+}
+
+func nftFromGQL(n gqlNftNode) getgemsNFT {
+	out := getgemsNFT{
+		Address:    strings.TrimSpace(n.Address),
+		Index:      n.Index,
+		Name:       n.Name,
+		Attributes: n.Attributes,
+	}
+	if n.Collection != nil {
+		out.CollectionAddress = n.Collection.Address
+		out.CollectionName = n.Collection.Name
+	}
+	if n.Sale != nil && (n.Sale.Typename == "NftSaleFixPrice" || strings.EqualFold(n.Sale.Typename, "NftSaleFixPrice")) {
+		out.Sale = &getgemsSale{
+			Type:      "FixPriceSale",
+			FullPrice: n.Sale.FullPrice,
+			Currency:  n.Sale.Currency,
+		}
+	}
+	return out
+}
+
+func (g *Getgems) gql(ctx context.Context, operation, hash string, variables map[string]any, dest any) error {
+	if err := g.gate.wait(ctx); err != nil {
+		return err
+	}
+	varsJSON, err := json.Marshal(variables)
+	if err != nil {
+		return err
+	}
+	extJSON, err := json.Marshal(map[string]any{
+		"clientLibrary":  map[string]any{"name": "@apollo/client", "version": "4.1.9"},
+		"persistedQuery": map[string]any{"version": 1, "sha256Hash": hash},
+	})
+	if err != nil {
+		return err
+	}
+	q := url.Values{}
+	q.Set("operationName", operation)
+	q.Set("variables", string(varsJSON))
+	q.Set("extensions", string(extJSON))
+	u := g.baseURL + "/?" + q.Encode()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", "https://getgems.io")
+	req.Header.Set("Referer", "https://getgems.io/")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1")
+	req.Header.Set("x-apollo-operation-name", operation)
+	req.Header.Set("x-gg-frontend", "1")
 
 	res, err := g.http.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("market/getgems: http: %w", err)
+		return fmt.Errorf("market/getgems: http: %w", err)
 	}
 	defer res.Body.Close()
 	body, err := io.ReadAll(res.Body)
 	if err != nil {
-		return nil, fmt.Errorf("market/getgems: read: %w", err)
+		return fmt.Errorf("market/getgems: read: %w", err)
 	}
 	if res.StatusCode == http.StatusUnauthorized {
-		return nil, &UnauthorizedError{Cause: fmt.Errorf("status %d: %s", res.StatusCode, truncate(body, 200))}
-	}
-	if res.StatusCode == http.StatusNotFound {
-		return nil, errGetgemsNotFound
+		return &UnauthorizedError{Cause: fmt.Errorf("status %d: %s", res.StatusCode, truncate(body, 200))}
 	}
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return nil, fmt.Errorf("market/getgems: status %d: %s", res.StatusCode, truncate(body, 200))
+		return fmt.Errorf("market/getgems: status %d: %s", res.StatusCode, truncate(body, 200))
 	}
-	var env getgemsEnvelope
+	var env struct {
+		Data   json.RawMessage `json:"data"`
+		Errors []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
 	if err := json.Unmarshal(body, &env); err != nil {
-		return nil, fmt.Errorf("market/getgems: decode: %w", err)
+		return fmt.Errorf("market/getgems: decode: %w", err)
 	}
-	if !env.Success {
-		return nil, fmt.Errorf("market/getgems: success=false: %s", truncate(body, 200))
+	if len(env.Errors) > 0 && (len(env.Data) == 0 || string(env.Data) == "null") {
+		return fmt.Errorf("market/getgems: graphql: %s", env.Errors[0].Message)
 	}
-	return env.Response, nil
+	if len(env.Data) == 0 || string(env.Data) == "null" {
+		if len(env.Errors) > 0 {
+			return fmt.Errorf("market/getgems: graphql: %s", env.Errors[0].Message)
+		}
+		return fmt.Errorf("market/getgems: empty graphql data")
+	}
+	if err := json.Unmarshal(env.Data, dest); err != nil {
+		return fmt.Errorf("market/getgems: decode data: %w", err)
+	}
+	return nil
 }
 
 func normalizeGetgemsNFT(n getgemsNFT, fallback string) (marketport.Listing, bool) {
@@ -556,10 +630,7 @@ func normalizeGetgemsNFT(n getgemsNFT, fallback string) (marketport.Listing, boo
 	if id == "" {
 		return marketport.Listing{}, false
 	}
-	coll := firstNonEmpty(n.CollectionName, "")
-	if n.Collection != nil {
-		coll = firstNonEmpty(coll, n.Collection.Name)
-	}
+	coll := strings.TrimSpace(n.CollectionName)
 	num := (*int)(nil)
 	parsedColl, parsedNum := parseGiftTitle(n.Name)
 	if coll == "" {
@@ -588,31 +659,29 @@ func normalizeGetgemsNFT(n getgemsNFT, fallback string) (marketport.Listing, boo
 	}, true
 }
 
-func normalizeGetgemsSale(el getgemsHistoryEl, fallback string) (marketport.Sale, bool) {
-	if !strings.EqualFold(el.TypeData.Type, "sold") {
+func normalizeGetgemsHistory(el gqlHistoryEl, fallback string) (marketport.Sale, bool) {
+	if !strings.EqualFold(el.TypeData.Type, "sold") && el.TypeData.Typename != "HistoryTypeSold" {
 		return marketport.Sale{}, false
 	}
 	if el.TypeData.Currency != "" && !strings.EqualFold(el.TypeData.Currency, "TON") {
 		return marketport.Sale{}, false
 	}
-	price := nanoStringToTON(el.TypeData.PriceNano)
-	if price <= 0 {
-		if p, err := strconv.ParseFloat(el.TypeData.Price, 64); err == nil {
-			price = p
-		}
-	}
+	price := nanoStringToTON(el.TypeData.Price)
 	if price <= 0 {
 		return marketport.Sale{}, false
 	}
-	coll, num := parseGiftTitle(el.Name)
+	name := ""
+	if el.NFT != nil {
+		name = el.NFT.Name
+	}
+	coll, num := parseGiftTitle(name)
 	if coll == "" {
 		coll = fallback
 	}
-	at, _ := time.Parse(time.RFC3339, el.Time)
 	return marketport.Sale{
 		Price:      price,
 		Number:     num,
-		At:         at,
+		At:         parseGetgemsTime(el.Time),
 		Collection: coll,
 	}, true
 }
@@ -664,11 +733,63 @@ func nanoStringToTON(s string) float64 {
 	return n
 }
 
-// ProbeGetgems — ключ Read API жив.
-func ProbeGetgems(ctx context.Context, apiKey string) error {
-	apiKey = strings.TrimSpace(apiKey)
-	if apiKey == "" {
-		return ErrEmptyToken
+func parseGetgemsTime(raw json.RawMessage) time.Time {
+	s := strings.TrimSpace(string(raw))
+	s = strings.Trim(s, `"`)
+	if s == "" || s == "null" {
+		return time.Time{}
 	}
-	return NewGetgems(GetgemsConfig{APIKey: apiKey}).CheckAuth(ctx)
+	if n, err := strconv.ParseInt(s, 10, 64); err == nil && n > 0 {
+		if n > 1e12 {
+			return time.UnixMilli(n)
+		}
+		return time.Unix(n, 0)
+	}
+	t, _ := time.Parse(time.RFC3339, s)
+	return t
+}
+
+func getgemsAttributesJSON(model, backdrop string) string {
+	var pairs [][]any
+	if m := strings.TrimSpace(model); m != "" {
+		pairs = append(pairs, []any{"Model", []string{m}})
+	}
+	if b := strings.TrimSpace(backdrop); b != "" {
+		pairs = append(pairs, []any{"Backdrop", []string{b}})
+	}
+	if len(pairs) == 0 {
+		return ""
+	}
+	raw, err := json.Marshal(pairs)
+	if err != nil {
+		return ""
+	}
+	return string(raw)
+}
+
+func getgemsCollectionScore(want, name string) int {
+	if giftid.Fold(want) == giftid.Fold(name) {
+		return 3
+	}
+	if getgemsNameClose(want, name) {
+		return 2
+	}
+	wf, nf := giftid.Fold(want), giftid.Fold(name)
+	if wf != "" && (strings.HasPrefix(nf, wf) || strings.HasPrefix(wf, nf)) {
+		return 1
+	}
+	return 0
+}
+
+func getgemsNameClose(a, b string) bool {
+	af, bf := giftid.Fold(a), giftid.Fold(b)
+	if af == bf {
+		return true
+	}
+	return af+"s" == bf || bf+"s" == af
+}
+
+// ProbeGetgems — фронтовый GraphQL отвечает (Read API key не нужен).
+func ProbeGetgems(ctx context.Context, _ string) error {
+	return NewGetgems(GetgemsConfig{}).CheckAuth(ctx)
 }
