@@ -94,6 +94,19 @@ Tonnel ходит с **Chrome TLS**. Если Cloudflare 403 — это IP (VPS/
 
 Mini App слушает `MINIAPP_PORT` (по умолчанию 8080).
 
+Grafana — только `127.0.0.1:3000`, не в туннель Mini App:
+
+```bash
+ssh -L 3000:127.0.0.1:3000 vps
+# http://localhost:3000  admin / GRAFANA_ADMIN_PASSWORD
+```
+
+Один дашборд **order-bot** (метрики, фильтр **Market**) и **order-bot logs** (Log rate + логи, фильтр **Log level**).
+
+Логи: Grafana Alloy читает docker json-file `order-bot` → Loki (все строки, ANSI снимается). Loki с хоста не публикуется. Лейблы только `{job="order-bot"}`. All показывает и `list ok`; WARN/ERROR — только шум сбоев.
+
+Prometheus scrape: `order-bot:9091/metrics` внутри docker-сети, наружу не публикуется. Выкл: `METRICS_ADDR=`.
+
 ---
 
 ## CI / CD

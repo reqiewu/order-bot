@@ -1,0 +1,41 @@
+// Docker logs → Loki. Labels stay low-cardinality: job + service only.
+discovery.docker "linux" {
+	host = "unix:///var/run/docker.sock"
+}
+
+discovery.relabel "orderbot" {
+	targets = discovery.docker.linux.targets
+
+	rule {
+		source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+		regex         = "order-bot"
+		action        = "keep"
+	}
+
+	rule {
+		source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+		target_label  = "service"
+	}
+
+	rule {
+		replacement  = "order-bot"
+		target_label = "job"
+	}
+}
+
+loki.source.docker "orderbot" {
+	host       = "unix:///var/run/docker.sock"
+	targets    = discovery.relabel.orderbot.output
+	forward_to = [loki.process.orderbot.receiver]
+}
+
+loki.process "orderbot" {
+	stage.decolorize {}
+	forward_to = [loki.write.local.receiver]
+}
+
+loki.write "local" {
+	endpoint {
+		url = "http://loki:3100/loki/api/v1/push"
+	}
+}

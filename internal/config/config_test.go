@@ -31,4 +31,18 @@ func TestFromEnvSessionAndBot(t *testing.T) {
 	if cfg.TelegramAPIHash != "hash" {
 		t.Fatalf("TelegramAPIHash=%q", cfg.TelegramAPIHash)
 	}
+	if cfg.MetricsAddr != ":9091" {
+		t.Fatalf("MetricsAddr default=%q", cfg.MetricsAddr)
+	}
+}
+
+func TestFromEnvMetricsAddrOff(t *testing.T) {
+	t.Setenv("METRICS_ADDR", "")
+	cfg, err := FromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.MetricsAddr != "" {
+		t.Fatalf("MetricsAddr=%q want empty", cfg.MetricsAddr)
+	}
 }

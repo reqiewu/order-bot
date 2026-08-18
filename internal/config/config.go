@@ -21,6 +21,7 @@ type Config struct {
 	PollInterval    time.Duration
 	WatchJSON       string // optional bootstrap slots JSON array
 	LogLevel        string // debug|info|warn|error
+	MetricsAddr     string // empty = metrics off
 }
 
 func FromEnv() (Config, error) {
@@ -58,6 +59,11 @@ func FromEnv() (Config, error) {
 		sec = n
 	}
 	cfg.PollInterval = time.Duration(sec) * time.Second
+	if _, ok := os.LookupEnv("METRICS_ADDR"); ok {
+		cfg.MetricsAddr = strings.TrimSpace(os.Getenv("METRICS_ADDR"))
+	} else {
+		cfg.MetricsAddr = ":9091"
+	}
 	return cfg, nil
 }
 

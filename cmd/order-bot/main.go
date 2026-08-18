@@ -25,6 +25,7 @@ import (
 	"github.com/reqiewu/order-bot/internal/ingress"
 	"github.com/reqiewu/order-bot/internal/market"
 	"github.com/reqiewu/order-bot/internal/marketport"
+	"github.com/reqiewu/order-bot/internal/metrics"
 	"github.com/reqiewu/order-bot/internal/miniapp"
 	"github.com/reqiewu/order-bot/internal/notify"
 	"github.com/reqiewu/order-bot/internal/store"
@@ -183,11 +184,14 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	metrics.Serve(ctx, cfg.MetricsAddr, log)
+
 	var tgSessionOK atomic.Bool
 	if tgUser != nil {
 		go func() {
 			err := tgUser.Run(ctx)
 			tgSessionOK.Store(false)
+			metrics.SetTGSession(false)
 			if err != nil && ctx.Err() == nil {
 				log.Warn("Telegram session stopped — update via tg-login", "err", err)
 			}
@@ -199,6 +203,7 @@ func main() {
 			tgMarket = nil
 		} else {
 			tgSessionOK.Store(true)
+			metrics.SetTGSession(true)
 			log.Info("Telegram MTProto ready (Gift Marketplace asks)")
 			probeCtx2, cancel2 := context.WithTimeout(ctx, 15*time.Second)
 			if err := tgMarket.CheckAuth(probeCtx2); err != nil {
@@ -356,6 +361,7 @@ func main() {
 		"tonnel", tonnel != nil && tonnel.Enabled(),
 		"telegram", tgMarket != nil,
 		"miniapp", miniCfg.Enabled(),
+		"metrics", cfg.MetricsAddr,
 		"log", cfg.LogLevel,
 	)
 	<-ctx.Done()

@@ -24,7 +24,7 @@ start:
 	else \
 		IMAGE=$(IMAGE) $(COMPOSE) up -d; \
 	fi
-	@echo "Mini App :$${MINIAPP_PORT:-8080} · логи: make logs"
+	@echo "Mini App :$${MINIAPP_PORT:-8080} · Grafana :3000 (localhost) · логи: make logs"
 
 pull:
 	@test -n "$(IMAGE)" || (echo "Задай IMAGE=ghcr.io/reqiewu/order-bot:latest"; exit 1)

@@ -8,6 +8,7 @@ import (
 	"github.com/reqiewu/order-bot/internal/catalog"
 	"github.com/reqiewu/order-bot/internal/giftid"
 	"github.com/reqiewu/order-bot/internal/marketport"
+	"github.com/reqiewu/order-bot/internal/metrics"
 	"github.com/reqiewu/order-bot/internal/money"
 	"github.com/reqiewu/order-bot/internal/spread"
 )
@@ -279,7 +280,10 @@ func (e *Engine) evalLot(lot catalog.Lot) {
 	}
 	if err := e.alert.PaperSignal(sig); err != nil {
 		e.log.Error("alert failed", "err", err)
+		metrics.ObservePaperAlert(sig.BuyMarket, err)
+		return
 	}
+	metrics.ObservePaperAlert(sig.BuyMarket, nil)
 }
 
 func (e *Engine) rebuildIndexLocked(market string) {

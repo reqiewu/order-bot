@@ -12,6 +12,7 @@ import (
 	"github.com/reqiewu/order-bot/internal/engine"
 	"github.com/reqiewu/order-bot/internal/jitter"
 	"github.com/reqiewu/order-bot/internal/marketport"
+	"github.com/reqiewu/order-bot/internal/metrics"
 	"github.com/reqiewu/order-bot/internal/money"
 )
 
@@ -85,6 +86,8 @@ func (w *Worker) tick(ctx context.Context, log *applog.Logger) {
 		return
 	}
 	slots := w.Slots()
+	total := 0
+	ok := false
 	for i, slot := range slots {
 		if !slot.Valid() {
 			continue
@@ -108,6 +111,7 @@ func (w *Worker) tick(ctx context.Context, log *applog.Logger) {
 		)
 		started := time.Now()
 		listings, err := w.Reader.Client.List(ctx, watch)
+		metrics.ObservePoll(w.Reader.Name, time.Since(started), err)
 		if err != nil {
 			log.Warn("list failed",
 				"market", w.Reader.Name,
@@ -132,6 +136,8 @@ func (w *Worker) tick(ctx context.Context, log *applog.Logger) {
 				URL:    l.URL,
 			})
 		}
+		ok = true
+		total += len(lots)
 		w.logListResult(log, slot, lots, time.Since(started))
 
 		ev := engine.MarketEvent{
@@ -145,6 +151,9 @@ func (w *Worker) tick(ctx context.Context, log *applog.Logger) {
 			return
 		case w.Out <- ev:
 		}
+	}
+	if ok {
+		metrics.SetListings(w.Reader.Name, total)
 	}
 }
 
