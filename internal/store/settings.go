@@ -190,6 +190,9 @@ func (s *Store) PutRuntime(r Runtime) error {
 	if r.PollIntervalSec < 1 {
 		return fmt.Errorf("store: poll_interval_sec min 1")
 	}
+	if r.PollIntervalSec > 3600 {
+		return fmt.Errorf("store: poll_interval_sec max 3600")
+	}
 	if r.MinSpreadBPS < 0 || r.MinProfitNano < 0 {
 		return fmt.Errorf("store: negative thresholds")
 	}

@@ -2,10 +2,12 @@ package notify
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/reqiewu/order-bot/internal/catalog"
 	"github.com/reqiewu/order-bot/internal/engine"
+	"github.com/reqiewu/order-bot/internal/fx"
 	"github.com/reqiewu/order-bot/internal/marketport"
 )
 
@@ -111,5 +113,28 @@ func TestBuyKeyboardTonnel(t *testing.T) {
 	}
 	if sell.Text != "Купить Getgems" || sell.URL != s.SellURL {
 		t.Fatalf("sell %+v", sell)
+	}
+}
+
+func TestFormatPaperTGEscapesHTML(t *testing.T) {
+	t.Parallel()
+	n := 1
+	s := engine.Signal{
+		BuyMarket:  "<script>x</script>",
+		SellMarket: "MRKT&Co",
+		Lot: catalog.Lot{
+			ModelBG: catalog.ModelBG{Collection: "Lunar Snake"},
+			Number:  &n,
+		},
+	}
+	text := formatPaperTG(s, fx.Quote{})
+	if strings.Contains(text, "<script>") {
+		t.Fatalf("unescaped: %s", text)
+	}
+	if !strings.Contains(text, "&lt;script&gt;") {
+		t.Fatalf("missing escape: %s", text)
+	}
+	if !strings.Contains(text, "MRKT&amp;Co") {
+		t.Fatalf("amp not escaped: %s", text)
 	}
 }

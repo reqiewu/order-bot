@@ -9,6 +9,7 @@ import (
 )
 
 func (s *Server) registerAssetRoutes() {
+	// Public: only local disk cache. Sync fills files; no upstream fetch on request.
 	s.mux.HandleFunc("GET /api/assets/original/{file}", s.handleAssetOriginal)
 	s.mux.HandleFunc("GET /api/assets/model/{gift}/{file}", s.handleAssetModel)
 }
@@ -24,12 +25,12 @@ func (s *Server) handleAssetOriginal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	size := assetPNGSize(r, ext)
-	raw, ct, err := s.deps.Assets.GetOriginal(r.Context(), name, ext, size)
+	raw, _, err := s.deps.Assets.OpenOriginal(name, ext, size)
 	if err != nil {
-		writeErr(w, http.StatusBadGateway, err.Error())
+		writeErr(w, http.StatusNotFound, "not found")
 		return
 	}
-	writeAsset(w, ct, raw)
+	writeAsset(w, ext, raw)
 }
 
 func (s *Server) handleAssetModel(w http.ResponseWriter, r *http.Request) {
@@ -44,12 +45,12 @@ func (s *Server) handleAssetModel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	size := assetPNGSize(r, ext)
-	raw, ct, err := s.deps.Assets.GetModel(r.Context(), gift, name, ext, size)
+	raw, _, err := s.deps.Assets.OpenModel(gift, name, ext, size)
 	if err != nil {
-		writeErr(w, http.StatusBadGateway, err.Error())
+		writeErr(w, http.StatusNotFound, "not found")
 		return
 	}
-	writeAsset(w, ct, raw)
+	writeAsset(w, ext, raw)
 }
 
 func splitAssetFile(file string) (name, ext string) {
@@ -71,22 +72,28 @@ func assetPNGSize(r *http.Request, ext string) int {
 			size = n
 		}
 	}
-	return size
+	return assetstore.NormalizePNGSize(size)
 }
 
-func writeAsset(w http.ResponseWriter, ct string, raw []byte) {
-	if ct != "" {
-		w.Header().Set("Content-Type", ct)
+func writeAsset(w http.ResponseWriter, ext string, raw []byte) {
+	ct := "application/octet-stream"
+	switch ext {
+	case "png":
+		ct = "image/png"
+	case "tgs":
+		ct = "application/octet-stream"
 	}
+	w.Header().Set("Content-Type", ct)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Cache-Control", "public, max-age=86400")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(raw)
 }
 
 func (s *Server) previewOriginal(gift string, size int) string {
-	return assetstore.PublicOriginalURL(gift, "png", size)
+	return assetstore.PublicOriginalURL(gift, "png", assetstore.NormalizePNGSize(size))
 }
 
 func (s *Server) previewModel(gift, model string, size int) string {
-	return assetstore.PublicModelURL(gift, model, "png", size)
+	return assetstore.PublicModelURL(gift, model, "png", assetstore.NormalizePNGSize(size))
 }

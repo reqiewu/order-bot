@@ -2,6 +2,8 @@ package miniapp
 
 import (
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"strings"
 )
@@ -14,6 +16,7 @@ type Config struct {
 	OperatorID  int64
 	DevBypassID int64
 	DevMode     bool
+	CORSOrigin  string // empty = no CORS (same-origin only)
 }
 
 func ConfigFromEnv(botToken string, operatorID int64) (Config, error) {
@@ -42,6 +45,22 @@ func ConfigFromEnv(botToken string, operatorID int64) (Config, error) {
 		}
 		cfg.DevBypassID = id
 	}
+	if pub := strings.TrimSpace(os.Getenv("MINIAPP_PUBLIC_URL")); pub != "" {
+		u, err := url.Parse(pub)
+		if err != nil || u.Scheme == "" || u.Host == "" {
+			return Config{}, fmt.Errorf("miniapp: MINIAPP_PUBLIC_URL invalid")
+		}
+		cfg.CORSOrigin = u.Scheme + "://" + u.Host
+	}
+	if cfg.Addr == "" {
+		return cfg, nil
+	}
+	if operatorID == 0 {
+		return Config{}, fmt.Errorf("miniapp: OPERATOR_TELEGRAM_ID required when Mini App is enabled")
+	}
+	if cfg.DevMode && !listenIsLoopback(cfg.Addr) {
+		return Config{}, fmt.Errorf("miniapp: MINIAPP_DEV only allowed on loopback listen addr (got %q)", cfg.Addr)
+	}
 	return cfg, nil
 }
 
@@ -60,4 +79,25 @@ func listenAddrFromEnv() string {
 		return raw
 	}
 	return ":" + raw
+}
+
+// listenIsLoopback is true only when the listen host is explicitly loopback.
+// Bare ":8080" / "0.0.0.0:8080" bind all interfaces → false.
+func listenIsLoopback(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		// ":8080" is invalid SplitHostPort in older Go? Actually ":8080" works with host="".
+		if strings.HasPrefix(addr, ":") {
+			return false
+		}
+		return false
+	}
+	if host == "" || host == "0.0.0.0" || host == "::" || host == "[::]" {
+		return false
+	}
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }

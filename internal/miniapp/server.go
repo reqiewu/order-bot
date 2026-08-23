@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -96,7 +97,7 @@ func (s *Server) withUser(next userHandler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		uid, err := s.authenticate(r)
 		if err != nil {
-			writeErr(w, http.StatusUnauthorized, err.Error())
+			writeErr(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
 		if s.deps.Config.OperatorID != 0 && uid != s.deps.Config.OperatorID {
@@ -246,7 +247,7 @@ func (s *Server) probeLiveTokens(ctx context.Context) tokenProbeStatus {
 	} else if s.deps.MRKT == nil {
 		st.MRKTErr = "mrkt client unavailable"
 	} else if err := s.deps.MRKT.CheckAuth(ctx); err != nil {
-		st.MRKTErr = err.Error()
+		st.MRKTErr = "probe failed"
 	} else {
 		st.MRKTOk = true
 	}
@@ -256,7 +257,7 @@ func (s *Server) probeLiveTokens(ctx context.Context) tokenProbeStatus {
 	} else if s.deps.Portals == nil {
 		st.PortalsErr = "portals client unavailable"
 	} else if err := s.deps.Portals.CheckAuth(ctx); err != nil {
-		st.PortalsErr = err.Error()
+		st.PortalsErr = "probe failed"
 	} else {
 		st.PortalsOk = true
 	}
@@ -264,7 +265,7 @@ func (s *Server) probeLiveTokens(ctx context.Context) tokenProbeStatus {
 	if s.deps.Getgems == nil {
 		st.GetgemsErr = "getgems client unavailable"
 	} else if err := s.deps.Getgems.CheckAuth(ctx); err != nil {
-		st.GetgemsErr = err.Error()
+		st.GetgemsErr = "probe failed"
 	} else {
 		st.GetgemsOk = true
 	}
@@ -274,7 +275,7 @@ func (s *Server) probeLiveTokens(ctx context.Context) tokenProbeStatus {
 	} else if s.deps.Tonnel == nil {
 		st.TonnelErr = "tonnel client unavailable"
 	} else if err := market.ProbeTonnelInitData(ctx, s.liveTonnel()); err != nil {
-		st.TonnelErr = err.Error()
+		st.TonnelErr = "probe failed"
 	} else {
 		st.TonnelOk = true
 	}
@@ -288,7 +289,7 @@ func (s *Server) probeTokens(w http.ResponseWriter, r *http.Request, _ int64) {
 		GetgemsAPIKey  *string `json:"getgems_api_key"`
 		TonnelInitData *string `json:"tonnel_initdata"`
 	}
-	_ = json.NewDecoder(r.Body).Decode(&body)
+	_ = decodeJSONBody(r, &body)
 
 	ctx, cancel := context.WithTimeout(r.Context(), 12*time.Second)
 	defer cancel()
@@ -324,7 +325,7 @@ func (s *Server) probeTokens(w http.ResponseWriter, r *http.Request, _ int64) {
 			out["mrkt_error"] = "empty"
 		} else if err := market.ProbeMRKT(ctx, tok); err != nil {
 			out["mrkt_ok"] = false
-			out["mrkt_error"] = err.Error()
+			out["mrkt_error"] = "invalid"
 		} else {
 			out["mrkt_ok"] = true
 		}
@@ -336,7 +337,7 @@ func (s *Server) probeTokens(w http.ResponseWriter, r *http.Request, _ int64) {
 			out["portals_error"] = "empty"
 		} else if err := market.ProbePortals(ctx, tok); err != nil {
 			out["portals_ok"] = false
-			out["portals_error"] = err.Error()
+			out["portals_error"] = "invalid"
 		} else {
 			out["portals_ok"] = true
 		}
@@ -348,7 +349,7 @@ func (s *Server) probeTokens(w http.ResponseWriter, r *http.Request, _ int64) {
 			out["getgems_error"] = "empty"
 		} else if err := market.ProbeGetgems(ctx, tok); err != nil {
 			out["getgems_ok"] = false
-			out["getgems_error"] = err.Error()
+			out["getgems_error"] = "invalid"
 		} else {
 			out["getgems_ok"] = true
 		}
@@ -360,7 +361,7 @@ func (s *Server) probeTokens(w http.ResponseWriter, r *http.Request, _ int64) {
 			out["tonnel_error"] = "empty"
 		} else if err := market.ProbeTonnelInitData(ctx, tok); err != nil {
 			out["tonnel_ok"] = false
-			out["tonnel_error"] = err.Error()
+			out["tonnel_error"] = "invalid"
 		} else {
 			out["tonnel_ok"] = true
 		}
@@ -376,7 +377,7 @@ func (s *Server) putTokens(w http.ResponseWriter, r *http.Request, _ int64) {
 		GetgemsAPIKey  *string `json:"getgems_api_key"`
 		TonnelInitData *string `json:"tonnel_initdata"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := decodeJSONBody(r, &body); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
@@ -396,11 +397,12 @@ func (s *Server) putTokens(w http.ResponseWriter, r *http.Request, _ int64) {
 			return
 		}
 		if err := market.ProbeMRKT(ctx, tok); err != nil {
-			writeErr(w, http.StatusBadRequest, "mrkt token invalid: "+err.Error())
+			writeErr(w, http.StatusBadRequest, "mrkt token invalid")
 			return
 		}
 		if err := s.deps.Store.PutMRKTToken(tok); err != nil {
-			writeErr(w, http.StatusInternalServerError, err.Error())
+			s.logWarn("put mrkt token", err)
+			writeErr(w, http.StatusInternalServerError, "save failed")
 			return
 		}
 		if s.deps.Hooks.OnMRKT != nil {
@@ -415,11 +417,12 @@ func (s *Server) putTokens(w http.ResponseWriter, r *http.Request, _ int64) {
 			return
 		}
 		if err := market.ProbePortals(ctx, tma); err != nil {
-			writeErr(w, http.StatusBadRequest, "portals tma invalid: "+err.Error())
+			writeErr(w, http.StatusBadRequest, "portals tma invalid")
 			return
 		}
 		if err := s.deps.Store.PutPortalsTMA(tma); err != nil {
-			writeErr(w, http.StatusInternalServerError, err.Error())
+			s.logWarn("put portals tma", err)
+			writeErr(w, http.StatusInternalServerError, "save failed")
 			return
 		}
 		if s.deps.Hooks.OnPortals != nil {
@@ -434,11 +437,12 @@ func (s *Server) putTokens(w http.ResponseWriter, r *http.Request, _ int64) {
 			return
 		}
 		if err := market.ProbeGetgems(ctx, key); err != nil {
-			writeErr(w, http.StatusBadRequest, "getgems api key invalid: "+err.Error())
+			writeErr(w, http.StatusBadRequest, "getgems api key invalid")
 			return
 		}
 		if err := s.deps.Store.PutGetgemsAPIKey(key); err != nil {
-			writeErr(w, http.StatusInternalServerError, err.Error())
+			s.logWarn("put getgems key", err)
+			writeErr(w, http.StatusInternalServerError, "save failed")
 			return
 		}
 		if s.deps.Hooks.OnGetgems != nil {
@@ -453,11 +457,12 @@ func (s *Server) putTokens(w http.ResponseWriter, r *http.Request, _ int64) {
 			return
 		}
 		if err := market.ProbeTonnelInitData(ctx, initData); err != nil {
-			writeErr(w, http.StatusBadRequest, "tonnel initData invalid: "+err.Error())
+			writeErr(w, http.StatusBadRequest, "tonnel initData invalid")
 			return
 		}
 		if err := s.deps.Store.PutTonnelInitData(initData); err != nil {
-			writeErr(w, http.StatusInternalServerError, err.Error())
+			s.logWarn("put tonnel initdata", err)
+			writeErr(w, http.StatusInternalServerError, "save failed")
 			return
 		}
 		if s.deps.Hooks.OnTonnel != nil {
@@ -474,7 +479,8 @@ func (s *Server) putTokens(w http.ResponseWriter, r *http.Request, _ int64) {
 func (s *Server) getRuntime(w http.ResponseWriter, _ *http.Request, _ int64) {
 	rt, err := s.deps.Store.GetRuntime()
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		s.logWarn("get runtime", err)
+		writeErr(w, http.StatusInternalServerError, "load failed")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -492,13 +498,14 @@ func (s *Server) putRuntime(w http.ResponseWriter, r *http.Request, _ int64) {
 		MinSpreadBPS    *int     `json:"min_spread_bps"`
 		MinSpreadPct    *float64 `json:"min_spread_pct"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := decodeJSONBody(r, &body); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
 	rt, err := s.deps.Store.GetRuntime()
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		s.logWarn("get runtime", err)
+		writeErr(w, http.StatusInternalServerError, "load failed")
 		return
 	}
 	if body.PollIntervalSec != nil {
@@ -513,7 +520,7 @@ func (s *Server) putRuntime(w http.ResponseWriter, r *http.Request, _ int64) {
 		rt.MinSpreadBPS = int(*body.MinSpreadPct * 100)
 	}
 	if err := s.deps.Store.PutRuntime(rt); err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+		writeErr(w, http.StatusBadRequest, "invalid runtime")
 		return
 	}
 	if s.deps.Hooks.OnRuntime != nil {
@@ -525,7 +532,8 @@ func (s *Server) putRuntime(w http.ResponseWriter, r *http.Request, _ int64) {
 func (s *Server) listSlots(w http.ResponseWriter, _ *http.Request, _ int64) {
 	slots, err := s.deps.Store.ListSlots()
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		s.logWarn("list slots", err)
+		writeErr(w, http.StatusInternalServerError, "load failed")
 		return
 	}
 	if slots == nil {
@@ -536,19 +544,21 @@ func (s *Server) listSlots(w http.ResponseWriter, _ *http.Request, _ int64) {
 
 func (s *Server) postSlot(w http.ResponseWriter, r *http.Request, _ int64) {
 	var slot catalog.WatchSlot
-	if err := json.NewDecoder(r.Body).Decode(&slot); err != nil {
+	if err := decodeJSONBody(r, &slot); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
 	slot.Collection = strings.TrimSpace(slot.Collection)
 	slot.Model = strings.TrimSpace(slot.Model)
 	slot.Backdrop = strings.TrimSpace(slot.Backdrop)
+	slot.ID = "" // server-assigned; ignore client id to prevent overwrite
 	if !slot.Valid() {
 		writeErr(w, http.StatusBadRequest, "collection required")
 		return
 	}
 	if err := s.deps.Store.PutSlot(slot); err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		s.logWarn("put slot", err)
+		writeErr(w, http.StatusInternalServerError, "save failed")
 		return
 	}
 	log := s.deps.Log
@@ -571,7 +581,7 @@ func (s *Server) deleteSlot(w http.ResponseWriter, r *http.Request, _ int64) {
 		Model      string `json:"model"`
 		Backdrop   string `json:"backdrop"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := decodeJSONBody(r, &body); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
@@ -580,7 +590,7 @@ func (s *Server) deleteSlot(w http.ResponseWriter, r *http.Request, _ int64) {
 		id = strings.TrimSpace(body.Collection) + "|" + strings.TrimSpace(body.Model) + "|" + strings.TrimSpace(body.Backdrop)
 	}
 	if err := s.deps.Store.DeleteSlot(id); err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+		writeErr(w, http.StatusBadRequest, "delete failed")
 		return
 	}
 	coll, model, bg := body.Collection, body.Model, body.Backdrop
@@ -631,11 +641,30 @@ func writeErr(w http.ResponseWriter, code int, msg string) {
 	writeJSON(w, code, map[string]string{"error": msg})
 }
 
+const maxJSONBody = 1 << 20 // 1 MiB
+
+func decodeJSONBody(r *http.Request, dest any) error {
+	defer r.Body.Close()
+	dec := json.NewDecoder(http.MaxBytesReader(nil, r.Body, maxJSONBody))
+	return dec.Decode(dest)
+}
+
+func (s *Server) logWarn(msg string, err error) {
+	log := s.deps.Log
+	if log == nil {
+		return
+	}
+	log.Warn(msg, "err", err)
+}
+
 func (s *Server) cors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-Telegram-Init-Data, Authorization, X-Dev-Telegram-Id")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		if origin := strings.TrimSpace(s.deps.Config.CORSOrigin); origin != "" {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Vary", "Origin")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-Telegram-Init-Data, Authorization, X-Dev-Telegram-Id")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		}
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return
@@ -652,8 +681,14 @@ func spaFileServer(dir string) http.Handler {
 			http.NotFound(w, r)
 			return
 		}
-		path := filepath.Join(dir, filepath.Clean(r.URL.Path))
-		if st, err := os.Stat(path); err == nil && !st.IsDir() {
+		// Jail to StaticDir: Clean then strip leading slash for http.Dir Open.
+		name := path.Clean("/" + r.URL.Path)
+		if name == "/" {
+			name = "/index.html"
+		}
+		f, err := fs.Open(name)
+		if err == nil {
+			_ = f.Close()
 			fileServer.ServeHTTP(w, r)
 			return
 		}

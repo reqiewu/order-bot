@@ -161,7 +161,79 @@ func modelDiskPath(dir, gift, model, ext string, size int) string {
 	return filepath.Join(dir, "model", g, m+"."+ext)
 }
 
+// AllowedPNGSizes — размеры, которые Sync кладёт на диск и HTTP может отдать.
+var AllowedPNGSizes = []int{128, 256}
+
+// NormalizePNGSize maps a requested size onto the allowlist (default 128).
+func NormalizePNGSize(size int) int {
+	if size <= 0 {
+		return 128
+	}
+	best := AllowedPNGSizes[0]
+	bestDist := absInt(size - best)
+	for _, s := range AllowedPNGSizes[1:] {
+		if d := absInt(size - s); d < bestDist {
+			best, bestDist = s, d
+		}
+	}
+	return best
+}
+
+func absInt(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
+}
+
+// OpenOriginal reads a cached original from disk only (no upstream fetch).
+// For PNG, falls back to 128 if the exact size is missing.
+func (s *Store) OpenOriginal(gift, ext string, size int) ([]byte, string, error) {
+	if ext == "png" {
+		size = NormalizePNGSize(size)
+	} else {
+		size = 0
+	}
+	path := originalDiskPath(s.Dir, gift, ext, size)
+	if raw, err := os.ReadFile(path); err == nil && len(raw) > 0 {
+		return raw, contentType(ext), nil
+	}
+	if ext == "png" && size != 128 {
+		path = originalDiskPath(s.Dir, gift, ext, 128)
+		if raw, err := os.ReadFile(path); err == nil && len(raw) > 0 {
+			return raw, contentType(ext), nil
+		}
+	}
+	return nil, "", fmt.Errorf("assetstore: not cached")
+}
+
+// OpenModel reads a cached model from disk only (no upstream fetch).
+func (s *Store) OpenModel(gift, model, ext string, size int) ([]byte, string, error) {
+	if ext == "png" {
+		size = NormalizePNGSize(size)
+	} else {
+		size = 0
+	}
+	path := modelDiskPath(s.Dir, gift, model, ext, size)
+	if raw, err := os.ReadFile(path); err == nil && len(raw) > 0 {
+		return raw, contentType(ext), nil
+	}
+	if ext == "png" && size != 128 {
+		path = modelDiskPath(s.Dir, gift, model, ext, 128)
+		if raw, err := os.ReadFile(path); err == nil && len(raw) > 0 {
+			return raw, contentType(ext), nil
+		}
+	}
+	return nil, "", fmt.Errorf("assetstore: not cached")
+}
+
+// GetOriginal fetches from GiftChanges on miss and writes the disk cache (Sync only).
 func (s *Store) GetOriginal(ctx context.Context, gift, ext string, size int) ([]byte, string, error) {
+	if ext == "png" {
+		size = NormalizePNGSize(size)
+	} else {
+		size = 0
+	}
 	path := originalDiskPath(s.Dir, gift, ext, size)
 	if raw, err := os.ReadFile(path); err == nil && len(raw) > 0 {
 		return raw, contentType(ext), nil
@@ -169,19 +241,22 @@ func (s *Store) GetOriginal(ctx context.Context, gift, ext string, size int) ([]
 	if s.GC == nil {
 		return nil, "", fmt.Errorf("assetstore: miss and no client")
 	}
-	raw, ct, err := s.GC.FetchOriginal(ctx, gift, ext, size)
+	raw, _, err := s.GC.FetchOriginal(ctx, gift, ext, size)
 	if err != nil {
 		return nil, "", err
 	}
 	_ = os.MkdirAll(filepath.Dir(path), 0o755)
 	_ = os.WriteFile(path, raw, 0o644)
-	if ct == "" {
-		ct = contentType(ext)
-	}
-	return raw, ct, nil
+	return raw, contentType(ext), nil
 }
 
+// GetModel fetches from GiftChanges on miss and writes the disk cache (Sync only).
 func (s *Store) GetModel(ctx context.Context, gift, model, ext string, size int) ([]byte, string, error) {
+	if ext == "png" {
+		size = NormalizePNGSize(size)
+	} else {
+		size = 0
+	}
 	path := modelDiskPath(s.Dir, gift, model, ext, size)
 	if raw, err := os.ReadFile(path); err == nil && len(raw) > 0 {
 		return raw, contentType(ext), nil
@@ -189,16 +264,13 @@ func (s *Store) GetModel(ctx context.Context, gift, model, ext string, size int)
 	if s.GC == nil {
 		return nil, "", fmt.Errorf("assetstore: miss and no client")
 	}
-	raw, ct, err := s.GC.FetchModel(ctx, gift, model, ext, size)
+	raw, _, err := s.GC.FetchModel(ctx, gift, model, ext, size)
 	if err != nil {
 		return nil, "", err
 	}
 	_ = os.MkdirAll(filepath.Dir(path), 0o755)
 	_ = os.WriteFile(path, raw, 0o644)
-	if ct == "" {
-		ct = contentType(ext)
-	}
-	return raw, ct, nil
+	return raw, contentType(ext), nil
 }
 
 func contentType(ext string) string {

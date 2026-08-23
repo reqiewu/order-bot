@@ -105,7 +105,10 @@ ssh -L 3000:127.0.0.1:3000 vps
 
 Логи: Grafana Alloy читает docker json-file `order-bot` → Loki (все строки, ANSI снимается). Loki с хоста не публикуется. Лейблы только `{job="order-bot"}`. All показывает и `list ok`; WARN/ERROR — только шум сбоев.
 
-Prometheus scrape: `order-bot:9091/metrics` внутри docker-сети, наружу не публикуется. Выкл: `METRICS_ADDR=`.
+Prometheus scrape: внутри docker-сети `order-bot:9091/metrics` (`METRICS_ADDR=:9091` в compose).
+Без Docker дефолт `127.0.0.1:9091`. Выкл: `METRICS_ADDR=`.
+
+Ассеты Mini App — только локальный кэш на диске (`ASSETS_DIR`); Sync качает png@128/256 + tgs в фоне. HTTP не ходит в GiftChanges.
 
 ---
 
@@ -150,9 +153,13 @@ SSH-деплой из Actions пока не подключён — скажи х
 
 ## Mini App без Telegram
 
-Локальная отладка API (в `.env`):
+Локальная отладка API (в `.env`). Dev-bypass только на loopback listen:
 
 ```bash
+MINIAPP_PORT=127.0.0.1:8080
 MINIAPP_DEV=1
 MINIAPP_DEV_USER_ID=<твой id>
+OPERATOR_TELEGRAM_ID=<тот же id>
 ```
+
+`MINIAPP_DEV` на `:8080` / публичном туннеле процесс не стартует. `OPERATOR_TELEGRAM_ID` обязателен, пока Mini App включён.

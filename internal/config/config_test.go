@@ -31,7 +31,7 @@ func TestFromEnvSessionAndBot(t *testing.T) {
 	if cfg.TelegramAPIHash != "hash" {
 		t.Fatalf("TelegramAPIHash=%q", cfg.TelegramAPIHash)
 	}
-	if cfg.MetricsAddr != ":9091" {
+	if cfg.MetricsAddr != "127.0.0.1:9091" {
 		t.Fatalf("MetricsAddr default=%q", cfg.MetricsAddr)
 	}
 }

@@ -62,7 +62,9 @@ func FromEnv() (Config, error) {
 	if _, ok := os.LookupEnv("METRICS_ADDR"); ok {
 		cfg.MetricsAddr = strings.TrimSpace(os.Getenv("METRICS_ADDR"))
 	} else {
-		cfg.MetricsAddr = ":9091"
+		// Loopback by default so bare-metal runs don't expose /metrics.
+		// Compose sets METRICS_ADDR=:9091 for docker-network Prometheus scrape.
+		cfg.MetricsAddr = "127.0.0.1:9091"
 	}
 	return cfg, nil
 }

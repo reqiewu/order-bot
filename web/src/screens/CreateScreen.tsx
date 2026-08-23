@@ -69,8 +69,8 @@ export function CreateScreen(props: Props) {
 
   const previewPng = useMemo(() => {
     if (!collection) return null;
-    if (model) return modelPreviewURL(collection, model, 512);
-    return giftPreviewURL(collection, 512);
+    if (model) return modelPreviewURL(collection, model, 256);
+    return giftPreviewURL(collection, 256);
   }, [collection, model]);
 
   const previewBg = useMemo(() => {

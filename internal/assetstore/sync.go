@@ -56,13 +56,19 @@ func (s *Store) Sync(ctx context.Context) {
 			}
 			continue
 		}
-		for _, job := range []struct {
+		origJobs := []struct {
 			kind, name, ext string
 			size            int
 		}{
-			{"original", "", "png", 128},
 			{"original", "", "tgs", 0},
-		} {
+		}
+		for _, sz := range AllowedPNGSizes {
+			origJobs = append(origJobs, struct {
+				kind, name, ext string
+				size            int
+			}{"original", "", "png", sz})
+		}
+		for _, job := range origJobs {
 			wg.Add(1)
 			go func(gift, kind, name, ext string, size int) {
 				defer wg.Done()
@@ -79,13 +85,19 @@ func (s *Store) Sync(ctx context.Context) {
 		}
 		for _, m := range sum.Models {
 			name := m.Name
-			for _, job := range []struct {
+			modelJobs := []struct {
 				ext  string
 				size int
 			}{
-				{"png", 128},
 				{"tgs", 0},
-			} {
+			}
+			for _, sz := range AllowedPNGSizes {
+				modelJobs = append(modelJobs, struct {
+					ext  string
+					size int
+				}{"png", sz})
+			}
+			for _, job := range modelJobs {
 				wg.Add(1)
 				go func(gift, name, ext string, size int) {
 					defer wg.Done()

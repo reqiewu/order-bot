@@ -13,6 +13,7 @@ import (
 )
 
 const giftChangesBase = "https://api.changes.tg"
+const giftChangesHost = "api.changes.tg"
 
 // GiftChanges — read-only client for api.changes.tg (catalog + assets metadata).
 type GiftChanges struct {
@@ -34,7 +35,23 @@ const giftCacheTTL = 10 * time.Minute
 
 // NewGiftChanges returns a client with sane defaults.
 func NewGiftChanges() *GiftChanges {
-	return &GiftChanges{HTTP: &http.Client{Timeout: 30 * time.Second}}
+	return &GiftChanges{HTTP: newPinnedClient()}
+}
+
+func newPinnedClient() *http.Client {
+	return &http.Client{
+		Timeout: 30 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 5 {
+				return fmt.Errorf("giftchanges: too many redirects")
+			}
+			host := strings.ToLower(req.URL.Hostname())
+			if host != giftChangesHost {
+				return fmt.Errorf("giftchanges: redirect to disallowed host %q", host)
+			}
+			return nil
+		},
+	}
 }
 
 // GiftSummary — gift with models/backdrops from GET /gift/:gift.
@@ -306,7 +323,7 @@ func (c *GiftChanges) http() *http.Client {
 	if c.HTTP != nil {
 		return c.HTTP
 	}
-	return http.DefaultClient
+	return newPinnedClient()
 }
 
 func truncate(b []byte, n int) string {

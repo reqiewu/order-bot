@@ -28,7 +28,8 @@ func (s *Server) handleCatalogGifts(w http.ResponseWriter, r *http.Request, _ in
 	}
 	names, err := s.deps.GiftChanges.ListGifts(r.Context())
 	if err != nil {
-		writeErr(w, http.StatusBadGateway, err.Error())
+		s.logWarn("catalog upstream", err)
+		writeErr(w, http.StatusBadGateway, "upstream error")
 		return
 	}
 
@@ -93,7 +94,8 @@ func (s *Server) handleCatalogGift(w http.ResponseWriter, r *http.Request, _ int
 	}
 	sum, err := s.deps.GiftChanges.Gift(r.Context(), gift)
 	if err != nil {
-		writeErr(w, http.StatusBadGateway, err.Error())
+		s.logWarn("catalog upstream", err)
+		writeErr(w, http.StatusBadGateway, "upstream error")
 		return
 	}
 	if err := s.ensureBackdropColors(r.Context()); err != nil && s.deps.Log != nil {
@@ -169,7 +171,8 @@ func (s *Server) handleCatalogModels(w http.ResponseWriter, r *http.Request, _ i
 	cq.Limit = catalogLimitOr(cq.Limit, 500)
 	page, err := s.deps.MRKT.Models(r.Context(), gift, cq)
 	if err != nil {
-		writeErr(w, http.StatusBadGateway, err.Error())
+		s.logWarn("catalog upstream", err)
+		writeErr(w, http.StatusBadGateway, "upstream error")
 		return
 	}
 	items := make([]map[string]any, 0, len(page.Items))
@@ -227,7 +230,8 @@ func (s *Server) handleCatalogBackdrops(w http.ResponseWriter, r *http.Request, 
 	cq.Limit = catalogLimitOr(cq.Limit, 500)
 	page, err := s.deps.MRKT.Backdrops(r.Context(), gift, model, cq)
 	if err != nil {
-		writeErr(w, http.StatusBadGateway, err.Error())
+		s.logWarn("catalog upstream", err)
+		writeErr(w, http.StatusBadGateway, "upstream error")
 		return
 	}
 	items := make([]map[string]any, 0, len(page.Items))
@@ -252,7 +256,8 @@ func (s *Server) handleAllBackdrops(w http.ResponseWriter, r *http.Request, _ in
 	if len(list) == 0 && s.deps.GiftChanges != nil {
 		got, err := s.deps.GiftChanges.ListBackdrops(r.Context())
 		if err != nil {
-			writeErr(w, http.StatusBadGateway, err.Error())
+			s.logWarn("catalog upstream", err)
+			writeErr(w, http.StatusBadGateway, "upstream error")
 			return
 		}
 		list = got
@@ -294,7 +299,8 @@ func (s *Server) handleCatalogBackdropInfo(w http.ResponseWriter, r *http.Reques
 	}
 	info, err := s.deps.GiftChanges.BackdropInfo(r.Context(), gift, backdrop)
 	if err != nil {
-		writeErr(w, http.StatusBadGateway, err.Error())
+		s.logWarn("catalog upstream", err)
+		writeErr(w, http.StatusBadGateway, "upstream error")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{

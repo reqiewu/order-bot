@@ -219,7 +219,7 @@ export function giftPreviewURL(gift: string, size = 128): string {
   return `/api/assets/original/${encodeURIComponent(assetSlug(gift))}.png?size=${size}`;
 }
 
-export function modelPreviewURL(gift: string, model: string, size = 256): string {
+export function modelPreviewURL(gift: string, model: string, size = 128): string {
   return `/api/assets/model/${encodeURIComponent(assetSlug(gift))}/${encodeURIComponent(assetSlug(model))}.png?size=${size}`;
 }
 

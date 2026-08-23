@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"html"
 	"net/http"
 	"strings"
 	"time"
@@ -69,8 +70,10 @@ func (t *Telegram) PaperSignal(s engine.Signal) error {
 func formatPaperTG(s engine.Signal, q fx.Quote) string {
 	fees := feesTotal(s.BestAsk)
 	var b strings.Builder
-	fmt.Fprintf(&b, "<b>PAPER BUY</b> %s @ %s%s\n", s.BuyMarket, formatTON(s.Lot.Price), usdtSuffix(s.Lot.Price, q))
-	fmt.Fprintf(&b, "<b>SELL</b> %s @ %s (ask) / undercut %s\n", s.SellMarket, formatTON(s.BestAsk), formatTON(s.Undercut))
+	fmt.Fprintf(&b, "<b>PAPER BUY</b> %s @ %s%s\n",
+		html.EscapeString(s.BuyMarket), formatTON(s.Lot.Price), usdtSuffix(s.Lot.Price, q))
+	fmt.Fprintf(&b, "<b>SELL</b> %s @ %s (ask) / undercut %s\n",
+		html.EscapeString(s.SellMarket), formatTON(s.BestAsk), formatTON(s.Undercut))
 	fmt.Fprintf(&b, "comps median %s\n", formatTON(s.SalesMedian))
 	fmt.Fprintf(&b, "net ask ≈ %s%s | net sales ≈ %s%s\n",
 		formatTON(s.NetAsk), usdtSuffix(s.NetAsk, q),
@@ -81,7 +84,7 @@ func formatPaperTG(s engine.Signal, q fx.Quote) string {
 		fmt.Fprintf(&b, "collection floor: %s\n", formatTON(s.CollFloor))
 	}
 	if nft := nftURL(s); nft != "" {
-		fmt.Fprintf(&b, "%s", nft)
+		fmt.Fprintf(&b, "%s", html.EscapeString(nft))
 	}
 	return b.String()
 }

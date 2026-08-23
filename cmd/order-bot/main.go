@@ -322,7 +322,15 @@ func main() {
 				},
 			},
 		})
-		httpSrv := &http.Server{Addr: miniCfg.Addr, Handler: srv.Handler()}
+		httpSrv := &http.Server{
+			Addr:              miniCfg.Addr,
+			Handler:           srv.Handler(),
+			ReadHeaderTimeout: 5 * time.Second,
+			ReadTimeout:       30 * time.Second,
+			WriteTimeout:      60 * time.Second,
+			IdleTimeout:       120 * time.Second,
+			MaxHeaderBytes:    1 << 20,
+		}
 		go func() {
 			log.Info("miniapp listening", "addr", miniCfg.Addr, "static", miniCfg.StaticDir)
 			if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
